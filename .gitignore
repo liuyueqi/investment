@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Cache / data
+.investment_cache/
+data_cache/
+*.sqlite3
+*.db
+
+# IDE
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# PyCharm
+.idea/
+
+# Coverage
+.coverage
+htmlcov/
+*.cover
+*.py,cover
+
+# Distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
