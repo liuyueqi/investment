@@ -97,6 +97,7 @@ class StockFlowRepository:
             
             print(f"正在获取股票 {code} 从 {start_date} 到 {date.today()} 的资金流向数据...")
             latest_stock_flows = self._tushare_adapter.get_daily_flow(code, start_date, date.today())
+            time.sleep(1)
             latest_money_flows[code] = latest_stock_flows
 
         for code, flows in latest_money_flows.items():
