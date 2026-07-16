@@ -38,31 +38,59 @@ class TushareAdapter(StockDataAdapter):
             end_date: 查询结束日期
         """
         try:
-            ts_code = code and self._to_ts_code(code)
-            params = {'ts_code': ts_code}
+            params = {}
+            if code is not None:
+                params['ts_code'] = self._to_ts_code(code)
             if start_date is not None:
                 params['start_date'] = start_date.strftime('%Y%m%d')
             if end_date is not None:
                 params['end_date'] = end_date.strftime('%Y%m%d')
-            df = self._pro.moneyflow(**params)
+            
+            results = self._pro.moneyflow(**params)
 
-            if df is None or df.empty:
+            if results is None or results.empty:
                 return []
 
-            flows = []
-            for _, row in df.iterrows():
-                dt = datetime.strptime(row['trade_date'], '%Y%m%d')
-                flow = MoneyFlow.daily(
-                    code=row.get('ts_code', code),
-                    date=dt,
-                    main_net=row.get('net_amount', 0.0),           # 主力净流入（万元）
-                    main_net_pct=row.get('net_amount_rate', 0.0),  # 占比
-                    net_amount=row.get('net_amount', 0.0),
-                    # moneyflow 接口返回的字段与 moneyflow_dc 略有不同
-                    # 根据实际返回字段调整映射
+            money_flows = []
+            for _, row in results.iterrows():
+                
+                ts_code = row.get('ts_code')
+                trade_date = datetime.strptime(row['trade_date'], '%Y%m%d')
+                buy_sm_vol = row.get('buy_sm_vol', 0.0)
+                buy_sm_amount = row.get('buy_sm_amount', 0.0)
+                sell_sm_vol = row.get('sell_sm_vol', 0.0)
+                sell_sm_amount = row.get('sell_sm_amount', 0.0)
+                buy_md_vol = row.get('buy_md_vol', 0.0)
+                buy_md_amount = row.get('buy_md_amount', 0.0)
+                sell_md_vol = row.get('sell_md_vol', 0.0)
+                sell_md_amount = row.get('sell_md_amount', 0.0)
+                buy_lg_vol = row.get('buy_lg_vol', 0.0)
+                buy_lg_amount = row.get('buy_lg_amount', 0.0)
+                sell_lg_vol = row.get('sell_lg_vol', 0.0)
+                sell_lg_amount = row.get('sell_lg_amount', 0.0)
+                buy_elg_vol = row.get('buy_elg_vol', 0.0)
+                buy_elg_amount = row.get('buy_elg_amount', 0.0)
+                sell_elg_vol = row.get('sell_elg_vol', 0.0)
+                sell_elg_amount = row.get('sell_elg_amount', 0.0)
+                net_mf_vol = row.get('net_mf_vol', 0.0)
+                net_mf_amount = row.get('net_mf_amount', 0.0)
+
+                money_flow = MoneyFlow.daily(
+                    code = ts_code.split('.')[0],  # 提取纯数字代码
+                    date = trade_date,
+                    main_cnt = net_mf_vol,             # 主力笔数
+                    main_net = net_mf_amount,           # 主力净流入（万元）
+                    super_large_cnt = buy_elg_vol - sell_elg_vol,  # 超大单笔数
+                    super_large_net = buy_elg_amount - sell_elg_amount,  # 超大单净流入（万元）
+                    large_cnt = buy_lg_vol - sell_lg_vol,          # 大单笔数
+                    large_net = buy_lg_amount - sell_lg_amount,          # 大单净流入（万元）
+                    medium_cnt = buy_md_vol - sell_md_vol,         # 中单笔数
+                    medium_net = buy_md_amount - sell_md_amount,         # 中单净流入（万元）
+                    small_cnt = buy_sm_vol - sell_sm_vol,           # 小单笔数
+                    small_net = buy_sm_amount - sell_sm_amount          # 小单净流入（万元）
                 )
-                flows.append(flow)
-            return flows
+                money_flows.append(money_flow)
+            return money_flows
         except Exception as e:
             print(f"获取股票 {code} 资金流向失败: {e}")
             return []

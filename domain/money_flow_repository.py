@@ -9,16 +9,18 @@ from domain.money_flow import MoneyFlow
 from infra.adapters import efinance_adapter, tushare_adapter
 
 
-class StockFlowRepository:
+class MoneyFlowRepository:
 
-    CACHE_FILE = "money_flows.csv"
+    _CACHE_FILE = "money_flows.csv"
+    _REQUEST_INTERVAL_SECONDS = 0.3  # 请求间隔，避免频繁请求被封禁
+    _DEFAULT_START_DAYS = 90  # 默认获取最近90天的数据
 
     def __init__(self):
         self._efinance_adapter = efinance_adapter
         self._tushare_adapter = tushare_adapter
         self._cache_dir = CACHE_DIR
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache_path = self._cache_dir / self.CACHE_FILE
+        self._cache_path = self._cache_dir / self._CACHE_FILE
         self._money_flows: Optional[Dict[str, Dict[date, MoneyFlow]]] = None
 
     def _loaded(self) -> bool:
@@ -85,6 +87,7 @@ class StockFlowRepository:
         latest_money_flows: Dict[str, List[MoneyFlow]] = {}
 
         print(f"开始更新资金流向数据，共 {len(stock_codes)} 只股票")
+        index = 0
         for code in stock_codes:
             money_flow: Optional[MoneyFlow] = last_money_flows.get(code)
             if self._latest_money_flow(money_flow):
@@ -93,11 +96,12 @@ class StockFlowRepository:
             if money_flow:
                 start_date = money_flow.time.date() + timedelta(days=1)
             else:
-                start_date = date.today() - timedelta(days=30)  # 默认获取最近30天的数据
-            
-            print(f"正在获取股票 {code} 从 {start_date} 到 {date.today()} 的资金流向数据...")
+                start_date = date.today() - timedelta(days=self._DEFAULT_START_DAYS)  # 默认获取最近90天的数据
+
+            index = index + 1
+            print(f"{index}: 正在获取股票 {code} 从 {start_date} 到 {date.today()} 的资金流向数据...")
             latest_stock_flows = self._tushare_adapter.get_daily_flow(code, start_date, date.today())
-            time.sleep(1)
+            time.sleep(self._REQUEST_INTERVAL_SECONDS)
             latest_money_flows[code] = latest_stock_flows
 
         for code, flows in latest_money_flows.items():
@@ -182,7 +186,7 @@ class StockFlowRepository:
                     money_flow.code,
                     money_flow.time.date().isoformat(),
                     money_flow.main_net,
-                    money_flow.main_net_pct,
+                    # money_flow.main_net_pct,
                     money_flow.net_amount,
                     money_flow.super_large_net,
                     money_flow.large_net,

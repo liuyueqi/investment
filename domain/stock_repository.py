@@ -9,14 +9,14 @@ from infra.adapters import efinance_adapter
 
 class StockRepository:
 
-    CACHE_FILE = "stocks.csv"
-    CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
+    _CACHE_FILE = "stocks.csv"
+    _CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
     
     def __init__(self):
         self._adapter = efinance_adapter
         self._cache_dir = CACHE_DIR
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache_path = self._cache_dir / self.CACHE_FILE
+        self._cache_path = self._cache_dir / self._CACHE_FILE
         self._stocks: Optional[Dict[str, Stock]] = None
     
     def _loaded(self) -> bool:
@@ -25,7 +25,7 @@ class StockRepository:
     def _latest(self) -> bool:
         if not self._cache_path.exists():
             return False
-        return (time.time() - self._cache_path.stat().st_mtime) < self.CACHE_TTL_SECONDS
+        return (time.time() - self._cache_path.stat().st_mtime) < self._CACHE_TTL_SECONDS
 
     def refresh(self, sync: bool = False) -> None:
         """同步外部数据到本地 CSV，并将结果加载到内存"""

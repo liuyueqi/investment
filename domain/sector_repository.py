@@ -12,17 +12,17 @@ from infra.adapters import efinance_adapter
 
 class SectorRepository:
 
-    CACHE_FILE = "sectors.csv"
-    CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
+    _CACHE_FILE = "sectors.csv"
+    _CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
     # 并发加载配置
-    CHUNK_SIZE = 100  # 每个线程处理的股票数量（可调整）
-    MAX_WORKERS = 16   # 最大并发线程数
+    _CHUNK_SIZE = 100  # 每个线程处理的股票数量（可调整）
+    _MAX_WORKERS = 16   # 最大并发线程数
 
     def __init__(self):
         self._adapter = efinance_adapter
         self._cache_dir = CACHE_DIR
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache_path = self._cache_dir / self.CACHE_FILE
+        self._cache_path = self._cache_dir / self._CACHE_FILE
         self._sectors: Optional[Dict[str, Sector]] = None
         # 保护对 _sectors 并发写入的锁
         self._lock = threading.Lock()
@@ -33,7 +33,7 @@ class SectorRepository:
     def _latest(self) -> bool:
         if not self._cache_path.exists():
             return False
-        return (time.time() - self._cache_path.stat().st_mtime) < self.CACHE_TTL_SECONDS
+        return (time.time() - self._cache_path.stat().st_mtime) < self._CACHE_TTL_SECONDS
 
     def refresh(self, stock_codes: Optional[List[str]] = None, sync: bool = False) -> None:
         """同步外部数据到本地 CSV，并将数据加载到内存"""
@@ -94,8 +94,8 @@ class SectorRepository:
             return
 
         sectors: Dict[str, Sector] = {}
-        chunks: List[List[str]] = [stock_codes[i:i + self.CHUNK_SIZE] for i in range(0, total, self.CHUNK_SIZE)]
-        max_workers = min(self.MAX_WORKERS, len(chunks))
+        chunks: List[List[str]] = [stock_codes[i:i + self._CHUNK_SIZE] for i in range(0, total, self._CHUNK_SIZE)]
+        max_workers = min(self._MAX_WORKERS, len(chunks))
 
         print(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块，使用 {max_workers} 个线程并发加载")
         with ThreadPoolExecutor(max_workers=max_workers) as exc:

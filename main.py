@@ -1,7 +1,7 @@
 # main.py
 from domain.stock_repository import StockRepository
 from domain.sector_repository import SectorRepository
-from domain.stock_flow_repository import StockFlowRepository
+from domain.money_flow_repository import MoneyFlowRepository
 
 def main():
     print("初始化 StockRepository 并加载数据...")
@@ -38,7 +38,7 @@ def main():
         print(f"加载板块数据失败: {e}")
 
     print("\n加载资金流入数据...")
-    stock_flow_repo = StockFlowRepository()
+    stock_flow_repo = MoneyFlowRepository()
     stock_flow_repo.refresh(sync=True)  # 强制刷新，验证从适配器获取并持久化
 
 if __name__ == "__main__":

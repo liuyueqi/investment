@@ -17,15 +17,20 @@ class MoneyFlow:
     code: str                     # 股票代码
     time: datetime                # 时间点（分钟/日/周/月 的起始时刻）
     period: str                   # 粒度: "1min", "5min", "day", "week", "month"
+    main_cnt: int                 # 主力笔数（可选）
     main_net: float               # 主力资金净流入（万元）
-    main_net_pct: float = 0.0     # 主力净流入占比（%）
+    # main_net_pct: float = 0.0     # 主力净流入占比（%）
     net_amount: float = 0.0       # 净主动买入额（万元）
     
     # 可选明细（如果API提供）
-    super_large_net: Optional[float] = None
-    large_net: Optional[float] = None
-    medium_net: Optional[float] = None
-    small_net: Optional[float] = None
+    super_large_cnt: Optional[int] = None # 超大单笔数
+    super_large_net: Optional[float] = None # 超大单净流入（万元）
+    large_cnt: Optional[int] = None # 大单笔数
+    large_net: Optional[float] = None # 大单净流入（万元）
+    medium_cnt: Optional[int] = None # 中单笔数
+    medium_net: Optional[float] = None # 中单净流入（万元）
+    small_cnt: Optional[int] = None # 小单笔数
+    small_net: Optional[float] = None # 小单净流入（万元）
 
     # ========== 核心工厂方法 ==========
 
