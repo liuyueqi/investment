@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 from context import CACHE_DIR
 from domain.stock import Stock
-from infra.adapters import default_adapter
+from infra.adapters import efinance_adapter
 
 class StockRepository:
 
@@ -13,7 +13,7 @@ class StockRepository:
     CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
     
     def __init__(self):
-        self._adapter = default_adapter
+        self._adapter = efinance_adapter
         self._cache_dir = CACHE_DIR
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_path = self._cache_dir / self.CACHE_FILE
@@ -31,7 +31,7 @@ class StockRepository:
         """同步外部数据到本地 CSV，并将结果加载到内存"""
         if not sync and self._latest():
             self._load_from_csv()
-
+            return
         self._update_from_adapter()
 
     def _load_from_csv(self) -> None:

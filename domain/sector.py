@@ -16,6 +16,6 @@ class Sector:
     members: List[str] = field(default_factory=list)
     
     # 只保留最基本的添加成分股方法（便于构建）
-    def add_constituent(self, stock_code: str) -> None:
+    def add_member(self, stock_code: str) -> None:
         if stock_code not in self.members:
             self.members.append(stock_code)

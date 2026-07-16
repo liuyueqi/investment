@@ -39,7 +39,7 @@ def main():
 
     print("\n加载资金流入数据...")
     stock_flow_repo = StockFlowRepository()
-    stock_flow_repo.refresh([stock.code for stock in stocks])
+    stock_flow_repo.refresh(sync=True)  # 强制刷新，验证从适配器获取并持久化
 
 if __name__ == "__main__":
     main()

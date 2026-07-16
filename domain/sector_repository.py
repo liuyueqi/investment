@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from context import CACHE_DIR
 from domain.sector import Sector, SectorType
-from infra.adapters import default_adapter
+from infra.adapters import efinance_adapter
 
 
 class SectorRepository:
@@ -15,11 +15,11 @@ class SectorRepository:
     CACHE_FILE = "sectors.csv"
     CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
     # 并发加载配置
-    CHUNK_SIZE = 500  # 每个线程处理的股票数量（可调整）
-    MAX_WORKERS = 8   # 最大并发线程数
+    CHUNK_SIZE = 100  # 每个线程处理的股票数量（可调整）
+    MAX_WORKERS = 16   # 最大并发线程数
 
     def __init__(self):
-        self._adapter = default_adapter
+        self._adapter = efinance_adapter
         self._cache_dir = CACHE_DIR
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_path = self._cache_dir / self.CACHE_FILE
@@ -39,7 +39,7 @@ class SectorRepository:
         """同步外部数据到本地 CSV，并将数据加载到内存"""
         if not sync and self._latest():
             self._load_from_csv()
-
+            return
         self._update_from_adapter(stock_codes)
 
     def _load_from_csv(self) -> None:
@@ -97,6 +97,7 @@ class SectorRepository:
         chunks: List[List[str]] = [stock_codes[i:i + self.CHUNK_SIZE] for i in range(0, total, self.CHUNK_SIZE)]
         max_workers = min(self.MAX_WORKERS, len(chunks))
 
+        print(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块，使用 {max_workers} 个线程并发加载")
         with ThreadPoolExecutor(max_workers=max_workers) as exc:
             futures = {exc.submit(self._process_chunk, chunk): chunk for chunk in chunks}
             for fut in as_completed(futures):
@@ -113,7 +114,7 @@ class SectorRepository:
                             sectors[code] = sector
                         else:
                             for c in sector.members:
-                                sectors[code].add_constituent(c)
+                                sectors[code].add_member(c)
 
         self._save_to_csv(sectors)
         self._sectors = sectors
@@ -133,7 +134,7 @@ class SectorRepository:
                         name=name,
                         type=self._infer_type(name)
                     )
-                sector_map[code].add_constituent(stock_code)
+                sector_map[code].add_member(stock_code)
 
             if (i + 1) % 500 == 0:
                 print(f"已处理 {i+1}/{len(stock_codes)} 只股票")
@@ -142,6 +143,8 @@ class SectorRepository:
 
     def _process_chunk(self, chunk: List[str]) -> Dict[str, Sector]:
         """处理一个股票代码块，返回本地的 sector_map。"""
+
+        print(f"线程 {threading.current_thread().name} 开始处理 {len(chunk)} 只股票")
         local_map: Dict[str, Sector] = {}
         for stock_code in chunk:
             boards = self._adapter.get_stock_sectors(stock_code)
@@ -154,7 +157,7 @@ class SectorRepository:
                         name=name,
                         type=self._infer_type(name)
                     )
-                local_map[code].add_constituent(stock_code)
+                local_map[code].add_member(stock_code)
         return local_map
 
     def _save_to_csv(self, sectors: Dict[str, Sector]) -> None:
@@ -162,6 +165,7 @@ class SectorRepository:
             print("警告：没有板块数据可保存")
             return
 
+        print(f"保存板块缓存到 {self._cache_path}，共 {len(sectors)} 个板块")
         with open(self._cache_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(['sector_code', 'sector_name', 'sector_type', 'constituents'])

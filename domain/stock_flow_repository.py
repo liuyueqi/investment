@@ -6,16 +6,16 @@ from datetime import date, datetime, timedelta
 
 from context import CACHE_DIR
 from domain.money_flow import MoneyFlow
-from infra.adapters import default_adapter
+from infra.adapters import efinance_adapter, tushare_adapter
 
 
 class StockFlowRepository:
 
     CACHE_FILE = "money_flows.csv"
-    CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
 
     def __init__(self):
-        self._adapter = default_adapter
+        self._efinance_adapter = efinance_adapter
+        self._tushare_adapter = tushare_adapter
         self._cache_dir = CACHE_DIR
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache_path = self._cache_dir / self.CACHE_FILE
@@ -73,7 +73,7 @@ class StockFlowRepository:
     def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
         # 如果外部未传入股票列表，则尝试从适配器获取全部股票信息
         if stock_codes is None:
-            stocks = self._adapter.get_all_stock_info()
+            stocks = self._efinance_adapter.get_all_stock_info()
             stock_codes = [stock.code for stock in stocks]
 
         if not stock_codes:
@@ -83,15 +83,20 @@ class StockFlowRepository:
         
         last_money_flows: Dict[str, MoneyFlow] = self._load_last_money_flows()
         latest_money_flows: Dict[str, List[MoneyFlow]] = {}
+
+        print(f"开始更新资金流向数据，共 {len(stock_codes)} 只股票")
         for code in stock_codes:
             money_flow: Optional[MoneyFlow] = last_money_flows.get(code)
             if self._latest_money_flow(money_flow):
                 continue
 
-            start_date = None
             if money_flow:
                 start_date = money_flow.time.date() + timedelta(days=1)
-            latest_stock_flows = self._adapter.get_daily_flow(code, start_date, None)  # 获取最新资金流向数据并更新缓存
+            else:
+                start_date = date.today() - timedelta(days=30)  # 默认获取最近30天的数据
+            
+            print(f"正在获取股票 {code} 从 {start_date} 到 {date.today()} 的资金流向数据...")
+            latest_stock_flows = self._tushare_adapter.get_daily_flow(code, start_date, date.today())
             latest_money_flows[code] = latest_stock_flows
 
         for code, flows in latest_money_flows.items():
@@ -162,8 +167,10 @@ class StockFlowRepository:
 
     def _save_to_csv(self, money_flows: Optional[List[MoneyFlow]]) -> None:
         if money_flows is None:
+            print("没有资金流向数据可保存")
             return
 
+        print(f"保存资金流向缓存到 {self._cache_path}，共 {len(money_flows)} 条记录")
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         with open(self._cache_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)

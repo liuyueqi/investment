@@ -55,12 +55,19 @@ class EfinanceAdapter(StockDataAdapter):
             print(f"获取 {stock_code} 所属板块失败: {e}")
             return []
     
-    def get_daily_flow(self, code: str, start_date: Optional[date] = None, end_date: Optional[date] = None) -> List[MoneyFlow]:
+    def get_daily_flow(
+        self,
+        code: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> List[MoneyFlow]:
         """
         获取日级资金流向数据
         """
         # 1. 从 efinance 获取原始数据
+        print(f"正在获取 {code} 的资金流向数据...")
         df = ef.stock.get_history_bill(code)
+        print(f"获取到 {len(df)} 条资金流向数据")
         
         # 2. 将日期列转换为 date 对象
         df['日期'] = pd.to_datetime(df['日期']).dt.date
@@ -95,17 +102,7 @@ class EfinanceAdapter(StockDataAdapter):
             results.append(mf)
         
         return results
-    
-    def get_minute_flow(self, code: str, dt: date) -> List[MoneyFlow]:
-        """获取分钟级资金流向"""
-        # TODO: 根据 efinance API 实现分钟级资金流向查询
-        return []
 
-    def get_daily_quote(self, code: str, start_date: date, end_date: date) -> List[DailyQuote]:
-        """获取日线行情数据"""
-        # TODO: 根据 efinance API 实现日线行情获取
-        return []
-    
     @staticmethod
     def _infer_market(code: str) -> str:
         if code.startswith('6'):
