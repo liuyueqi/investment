@@ -1,18 +1,16 @@
-import csv
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
+from datetime import datetime
 from typing import Dict, List, Optional
 
-from context import CACHE_DIR
 from domain.sector import Sector, SectorType
 from infra.adapters import efinance_adapter
+from infra.database.connection import get_db
 
 
 class SectorRepository:
 
-    _CACHE_FILE = "sectors.csv"
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
     # 并发加载配置
     _CHUNK_SIZE = 100  # 每个线程处理的股票数量（可调整）
@@ -20,60 +18,30 @@ class SectorRepository:
 
     def __init__(self):
         self._adapter = efinance_adapter
-        self._cache_dir = CACHE_DIR
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache_path = self._cache_dir / self._CACHE_FILE
-        self._sectors: Optional[Dict[str, Sector]] = None
-        # 保护对 _sectors 并发写入的锁
+        # 保护对数据库并发写入的锁
         self._lock = threading.Lock()
 
-    def _loaded(self) -> bool:
-        return self._sectors is not None
-
-    def _latest(self) -> bool:
-        if not self._cache_path.exists():
-            return False
-        return (time.time() - self._cache_path.stat().st_mtime) < self._CACHE_TTL_SECONDS
-
-    def refresh(self, stock_codes: Optional[List[str]] = None, sync: bool = False) -> None:
-        """同步外部数据到本地 CSV，并将数据加载到内存"""
-        if not sync and self._latest():
-            self._load_from_csv()
+    def refresh(self, stock_codes: Optional[List[str]] = None, force: bool = False) -> None:
+        """同步外部数据到数据库，并将数据加载到数据库"""
+        if not force and self._latest():
+            print("数据库缓存有效，跳过刷新")
             return
         self._update_from_adapter(stock_codes)
 
-    def _load_from_csv(self) -> None:
-        if not self._cache_path.exists():
-            return
-
-        try:
-            with open(self._cache_path, 'r', encoding='utf-8', newline='') as f:
-                reader = csv.reader(f)
-                rows = list(reader)
-                if len(rows) < 2:
-                    print("CSV 缓存文件为空或格式不正确，将重新构建")
-
-                sector_map: Dict[str, Sector] = {}
-                for row in rows[1:]:
-                    if len(row) >= 4:
-                        code = row[0]
-                        name = row[1]
-                        type_str = row[2]
-                        constituents_str = row[3]
-                        constituents = [c for c in constituents_str.split(',') if c]
-                        sector_map[code] = Sector(
-                            code=code,
-                            name=name,
-                            type=SectorType(type_str),
-                            members=constituents,
-                        )
-                    else:
-                        print(f"CSV 行格式不正确，跳过: {row}")
-
-                self._sectors = sector_map
-                print(f"从 CSV 缓存加载了 {len(sector_map)} 个板块")
-        except Exception as e:
-            print(f"读取板块缓存失败: {e}")
+    def _latest(self) -> bool:
+        """检查数据库中是否有在缓存有效期内的数据"""
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated FROM sectors WHERE is_deleted = 0"
+            ).fetchone()
+            count = row["cnt"]
+            if count == 0:
+                return False
+            max_updated = row["max_updated"]
+            if max_updated is None:
+                return False
+            updated_dt = datetime.strptime(max_updated, "%Y-%m-%d %H:%M:%S")
+            return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
 
     def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
         # 如果外部未传入股票列表，则尝试从适配器获取全部股票信息
@@ -83,16 +51,14 @@ class SectorRepository:
 
         if not stock_codes:
             print("获取股票代码列表失败，无法构建板块数据")
-            self._sectors = self._sectors or {}
             return
 
-        # 并发加载：把 stock_codes 切分为块，每个 worker 调用 adapter.get_stock_boards
         total = len(stock_codes)
         if total == 0:
             print("股票代码列表为空，无法构建板块数据")
-            self._sectors = self._sectors or {}
             return
 
+        # 并发加载：把 stock_codes 切分为块，每个 worker 调用 adapter.get_stock_sectors
         sectors: Dict[str, Sector] = {}
         chunks: List[List[str]] = [stock_codes[i:i + self._CHUNK_SIZE] for i in range(0, total, self._CHUNK_SIZE)]
         max_workers = min(self._MAX_WORKERS, len(chunks))
@@ -116,12 +82,66 @@ class SectorRepository:
                             for c in sector.members:
                                 sectors[code].add_member(c)
 
-        self._save_to_csv(sectors)
-        self._sectors = sectors
-        print(f"构建完成，共 {len(self._sectors or {})} 个板块，已保存到缓存")
+        self._save_to_db(sectors)
+        print(f"构建完成，共 {len(sectors)} 个板块，已保存到数据库")
+
+    def _process_chunk(self, chunk: List[str]) -> Dict[str, Sector]:
+        """处理一个股票代码块，返回本地的 sector_map。"""
+        print(f"线程 {threading.current_thread().name} 开始处理 {len(chunk)} 只股票")
+        local_map: Dict[str, Sector] = {}
+        for stock_code in chunk:
+            boards = self._adapter.get_stock_sectors(stock_code)
+            for board in boards:
+                code = board['code']
+                name = board['name']
+                if code not in local_map:
+                    local_map[code] = Sector(
+                        code=code,
+                        name=name,
+                        type=self._infer_type(name)
+                    )
+                local_map[code].add_member(stock_code)
+        return local_map
+
+    def _save_to_db(self, sectors: Dict[str, Sector]) -> None:
+        """将板块数据写入数据库（sectors 表 + sector_members 表）"""
+        if not sectors:
+            print("警告：没有板块数据可保存")
+            return
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with get_db() as conn:
+            # 先软删除旧的板块成员（避免外键冲突，我们先处理 members）
+            conn.execute("UPDATE sector_members SET is_deleted = 1, updated_at = ?", (now,))
+
+            for sector in sectors.values():
+                # UPSERT 板块基本信息
+                conn.execute(
+                    """INSERT INTO sectors (code, name, type, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT(code) DO UPDATE SET
+                           name       = excluded.name,
+                           type       = excluded.type,
+                           updated_at = excluded.updated_at,
+                           is_deleted = 0""",
+                    (sector.code, sector.name, sector.type.value, now, now),
+                )
+
+                # 插入板块成员
+                for member_code in sector.members:
+                    conn.execute(
+                        """INSERT INTO sector_members (sector_code, stock_code, created_at, updated_at)
+                           VALUES (?, ?, ?, ?)
+                           ON CONFLICT(sector_code, stock_code) DO UPDATE SET
+                               is_deleted = 0,
+                               updated_at = excluded.updated_at""",
+                        (sector.code, member_code, now, now),
+                    )
+
+        print(f"板块数据已保存到数据库，共 {len(sectors)} 个板块")
 
     def _build_from_stocks(self, stock_codes: List[str]) -> None:
-        # 保留顺序处理方法（用于小规模或测试）
+        """保留顺序处理方法（用于小规模或测试）"""
         sector_map: Dict[str, Sector] = {}
         for i, stock_code in enumerate(stock_codes):
             boards = self._adapter.get_stock_sectors(stock_code)
@@ -139,56 +159,57 @@ class SectorRepository:
             if (i + 1) % 500 == 0:
                 print(f"已处理 {i+1}/{len(stock_codes)} 只股票")
 
-        self._sectors = sector_map
-
-    def _process_chunk(self, chunk: List[str]) -> Dict[str, Sector]:
-        """处理一个股票代码块，返回本地的 sector_map。"""
-
-        print(f"线程 {threading.current_thread().name} 开始处理 {len(chunk)} 只股票")
-        local_map: Dict[str, Sector] = {}
-        for stock_code in chunk:
-            boards = self._adapter.get_stock_sectors(stock_code)
-            for board in boards:
-                code = board['code']
-                name = board['name']
-                if code not in local_map:
-                    local_map[code] = Sector(
-                        code=code,
-                        name=name,
-                        type=self._infer_type(name)
-                    )
-                local_map[code].add_member(stock_code)
-        return local_map
-
-    def _save_to_csv(self, sectors: Dict[str, Sector]) -> None:
-        if not sectors:
-            print("警告：没有板块数据可保存")
-            return
-
-        print(f"保存板块缓存到 {self._cache_path}，共 {len(sectors)} 个板块")
-        with open(self._cache_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['sector_code', 'sector_name', 'sector_type', 'constituents'])
-            for sector in sectors.values():
-                constituents_str = ','.join(sector.members)
-                writer.writerow([
-                    sector.code,
-                    sector.name,
-                    sector.type.value,
-                    constituents_str,
-                ])
-
-        print(f"板块缓存已保存到 {self._cache_path}")
+        self._save_to_db(sector_map)
 
     def find_by_code(self, code: str) -> Optional[Sector]:
-        if not self._loaded():
-            self.refresh()
-        return (self._sectors or {}).get(code)
+        """根据板块代码查询板块信息及成分股"""
+        with get_db() as conn:
+            # 查询板块基本信息
+            row = conn.execute(
+                "SELECT code, name, type FROM sectors WHERE code = ? AND is_deleted = 0",
+                (code,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            # 查询成分股
+            member_rows = conn.execute(
+                "SELECT stock_code FROM sector_members WHERE sector_code = ? AND is_deleted = 0 ORDER BY stock_code",
+                (code,),
+            ).fetchall()
+            members = [r["stock_code"] for r in member_rows]
+
+            return Sector(
+                code=row["code"],
+                name=row["name"],
+                type=SectorType(row["type"]),
+                members=members,
+            )
 
     def find_all(self) -> List[Sector]:
-        if not self._loaded():
-            self.refresh()
-        return list((self._sectors or {}).values())
+        """获取所有板块信息及成分股"""
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT code, name, type FROM sectors WHERE is_deleted = 0 ORDER BY code"
+            ).fetchall()
+
+            sectors = []
+            for row in rows:
+                # 查询成分股
+                member_rows = conn.execute(
+                    "SELECT stock_code FROM sector_members WHERE sector_code = ? AND is_deleted = 0 ORDER BY stock_code",
+                    (row["code"],),
+                ).fetchall()
+                members = [r["stock_code"] for r in member_rows]
+
+                sectors.append(Sector(
+                    code=row["code"],
+                    name=row["name"],
+                    type=SectorType(row["type"]),
+                    members=members,
+                ))
+
+            return sectors
 
     @staticmethod
     def _infer_type(name: str) -> SectorType:

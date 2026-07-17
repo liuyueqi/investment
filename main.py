@@ -2,8 +2,12 @@
 from domain.stock_repository import StockRepository
 from domain.sector_repository import SectorRepository
 from domain.money_flow_repository import MoneyFlowRepository
+from infra.database.schema import init_db
 
 def main():
+    
+    _init_db()  # 初始化数据库
+
     print("初始化 StockRepository 并加载数据...")
     stock_repo = StockRepository()
     stock_repo.refresh()  # 强制刷新，验证从适配器获取并持久化
@@ -16,14 +20,6 @@ def main():
         for stock in stocks[:5]:
             print(f"  {stock.code} - {stock.name} ({stock.market})")
     
-    # 检查缓存文件是否存在
-    cache_path = stock_repo._cache_path
-    if cache_path.exists():
-        print(f"\n缓存文件已保存到: {cache_path}")
-        print(f"文件大小: {cache_path.stat().st_size} 字节")
-    else:
-        print("\n缓存文件未找到，请检查保存逻辑。")
-
     print("\n加载板块数据...")
     sector_repo = SectorRepository()
     try:
@@ -39,7 +35,12 @@ def main():
 
     print("\n加载资金流入数据...")
     stock_flow_repo = MoneyFlowRepository()
-    stock_flow_repo.refresh(sync=True)  # 强制刷新，验证从适配器获取并持久化
+    stock_flow_repo.refresh(force=True)  # 强制刷新，验证从适配器获取并持久化
+
+def _init_db():
+    """初始化数据库"""
+    init_db()
+    print("数据库初始化完成!")
 
 if __name__ == "__main__":
     main()

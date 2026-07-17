@@ -1,195 +1,196 @@
-import csv
 import time
-from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import date, datetime, timedelta
 
-from context import CACHE_DIR
 from domain.money_flow import MoneyFlow
 from infra.adapters import efinance_adapter, tushare_adapter
+from infra.database.connection import get_db
 
 
 class MoneyFlowRepository:
 
-    _CACHE_FILE = "money_flows.csv"
-    _REQUEST_INTERVAL_SECONDS = 0.3  # 请求间隔，避免频繁请求被封禁
-    _DEFAULT_START_DAYS = 90  # 默认获取最近90天的数据
+    _REQUEST_INTERVAL_SECONDS = 0.3
+    _DEFAULT_START_DAYS = 90
+    _CACHE_TTL_SECONDS = 24 * 60 * 60
 
     def __init__(self):
         self._efinance_adapter = efinance_adapter
         self._tushare_adapter = tushare_adapter
-        self._cache_dir = CACHE_DIR
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache_path = self._cache_dir / self._CACHE_FILE
-        self._money_flows: Optional[Dict[str, Dict[date, MoneyFlow]]] = None
 
-    def _loaded(self) -> bool:
-        return self._money_flows is not None
-
-    def refresh(self, stock_codes: Optional[List[str]] = None, sync: bool = True) -> None:
-        """同步外部数据与本地 CSV 缓存，并将结果加载到内存。"""
-        if not sync:
-            self._load_from_csv()
+    def refresh(self, stock_codes: Optional[List[str]] = None, force: bool = True) -> None:
+        if not force and self._latest():
+            print("数据库缓存有效，跳过刷新")
             return
         self._update_from_adapter(stock_codes)
 
-    def _load_from_csv(self) -> None:
-        if not self._cache_path.exists():
-            return
-
-        try:
-            with open(self._cache_path, 'r', encoding='utf-8', newline='') as f:
-                reader = csv.reader(f)
-                rows = list(reader)
-                if len(rows) < 2:
-                    print("CSV 缓存文件为空或格式不正确，将重新构建")
-                    return
-
-                money_flows: Dict[str, Dict[date, MoneyFlow]] = {}
-                for row in rows[1:]:
-                    if len(row) >= 4:
-                        code = row[0]
-                        date_obj = datetime.strptime(row[1], '%Y-%m-%d')
-                        money_flow = MoneyFlow.daily(
-                            code=code,
-                            date=date_obj,
-                            main_net=float(row[2]) if row[2] else 0.0,
-                            main_net_pct=float(row[3]) if len(row) > 3 and row[3] else 0.0,
-                            net_amount=float(row[4]) if len(row) > 4 and row[4] else 0.0,
-                            super_large_net=float(row[5]) if len(row) > 5 and row[5] else None,
-                            large_net=float(row[6]) if len(row) > 6 and row[6] else None,
-                            medium_net=float(row[7]) if len(row) > 7 and row[7] else None,
-                            small_net=float(row[8]) if len(row) > 8 and row[8] else None,
-                        )
-                        if code not in money_flows:
-                            money_flows[code] = {}
-                        money_flows[code][date_obj] = money_flow
-                    else:
-                        print(f"CSV 行格式不正确，跳过: {row}")
-
-                self._money_flows = money_flows
-                print(f"从 CSV 缓存加载了 {len(money_flows)} 个股票的资金流向数据")
-        except Exception as e:
-            print(f"读取资金流向缓存失败: {e}")
+    def _latest(self) -> bool:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated FROM money_flows WHERE is_deleted = 0"
+            ).fetchone()
+            count = row["cnt"]
+            if count == 0:
+                return False
+            max_updated = row["max_updated"]
+            if max_updated is None:
+                return False
+            updated_dt = datetime.strptime(max_updated, "%Y-%m-%d %H:%M:%S")
+            return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
 
     def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
-        # 如果外部未传入股票列表，则尝试从适配器获取全部股票信息
         if stock_codes is None:
             stocks = self._efinance_adapter.get_all_stock_info()
             stock_codes = [stock.code for stock in stocks]
 
         if not stock_codes:
             print("未提供股票代码列表，且无法从适配器获取股票信息，无法更新资金流向数据")
-            self._money_flows = self._money_flows or {}
             return
-        
-        last_money_flows: Dict[str, MoneyFlow] = self._load_last_money_flows()
-        latest_money_flows: Dict[str, List[MoneyFlow]] = {}
+
+        last_flow_dates = self._load_last_flow_dates(stock_codes)
 
         print(f"开始更新资金流向数据，共 {len(stock_codes)} 只股票")
+        total_saved = 0
         index = 0
         for code in stock_codes:
-            money_flow: Optional[MoneyFlow] = last_money_flows.get(code)
-            if self._latest_money_flow(money_flow):
+            last_date = last_flow_dates.get(code)
+            if self._is_up_to_date(last_date):
                 continue
 
-            if money_flow:
-                start_date = money_flow.time.date() + timedelta(days=1)
+            if last_date:
+                start_date = last_date + timedelta(days=1)
             else:
-                start_date = date.today() - timedelta(days=self._DEFAULT_START_DAYS)  # 默认获取最近90天的数据
+                start_date = date.today() - timedelta(days=self._DEFAULT_START_DAYS)
 
-            index = index + 1
-            print(f"{index}: 正在获取股票 {code} 从 {start_date} 到 {date.today()} 的资金流向数据...")
-            latest_stock_flows = self._tushare_adapter.get_daily_flow(code, start_date, date.today())
+            today = date.today()
+            if start_date > today:
+                continue
+
+            index += 1
+            print(f"{index}: 正在获取股票 {code} 从 {start_date} 到 {today} 的资金流向数据...")
+            flows = self._tushare_adapter.get_daily_flow(code, start_date, today)
             time.sleep(self._REQUEST_INTERVAL_SECONDS)
-            latest_money_flows[code] = latest_stock_flows
 
-        for code, flows in latest_money_flows.items():
             if flows:
-                self._merge_flows(code, flows)
+                self._save_flows_to_db(flows)
+                total_saved += len(flows)
 
-        list_of_money_flows = [val for values in latest_money_flows.values() for val in values]
-        self._save_to_csv(list_of_money_flows)
+        print(f"资金流向数据更新完成，共保存 {total_saved} 条新记录")
 
-    def _load_last_money_flows(self) -> Dict[str, MoneyFlow]:
-        if not self._cache_path.exists():
-            return {}
-        
-        try:
-            with open(self._cache_path, 'r', encoding='utf-8', newline='') as f:
-                reader = csv.reader(f)
-                rows = list(reader)
-                if len(rows) < 2:
-                    print("CSV 缓存文件为空或格式不正确，将重新构建")
+    def _load_last_flow_dates(self, stock_codes: List[str]) -> Dict[str, Optional[date]]:
+        result: Dict[str, Optional[date]] = {}
+        with get_db() as conn:
+            for code in stock_codes:
+                row = conn.execute(
+                    "SELECT MAX(trade_date) AS max_date FROM money_flows WHERE code = ? AND period = 'day' AND is_deleted = 0",
+                    (code,),
+                ).fetchone()
+                max_date_str = row["max_date"]
+                if max_date_str:
+                    result[code] = datetime.strptime(max_date_str, "%Y-%m-%d").date()
+                else:
+                    result[code] = None
+        return result
 
-                money_flows: Dict[str, MoneyFlow] = {}
-                for row in rows[1:]:
-                    if len(row) >= 4:
-                        code = row[0]
-                        date_obj = datetime.strptime(row[1], '%Y-%m-%d')
-                        money_flow = money_flows.get(code)
-                        if not money_flow or money_flow.time < date_obj:
-                            money_flow = MoneyFlow.daily(
-                                code=code,
-                                date=date_obj,
-                                main_net=float(row[2]) if row[2] else 0.0,
-                                main_net_pct=float(row[3]) if len(row) > 3 and row[3] else 0.0,
-                                net_amount=float(row[4]) if len(row) > 4 and row[4] else 0.0,
-                                super_large_net=float(row[5]) if len(row) > 5 and row[5] else None,
-                                large_net=float(row[6]) if len(row) > 6 and row[6] else None,
-                                medium_net=float(row[7]) if len(row) > 7 and row[7] else None,
-                                small_net=float(row[8]) if len(row) > 8 and row[8] else None,
-                            )
-                            money_flows[code] = money_flow
-                    else:
-                        print(f"CSV 行格式不正确，跳过: {row}")
-
-                print(f"从 CSV 缓存加载了 {len(money_flows)} 个板块")
-                return money_flows
-        except Exception as e:
-            print(f"读取板块缓存失败: {e}")
-            return {}
-        
-    def _latest_money_flow(self, money_flow: Optional[MoneyFlow]) -> bool:
-        if not money_flow:
+    def _is_up_to_date(self, last_date: Optional[date]) -> bool:
+        if last_date is None:
             return False
-        
-        last_trading_day = datetime.now().date()
-        if (last_trading_day.weekday() >= 5):  # 周末
-            last_trading_day -= timedelta(days=last_trading_day.weekday() - 4)
+        last_trading_day = self._get_last_trading_day()
+        return last_date >= last_trading_day
 
-        return money_flow.time.date() >= last_trading_day
+    def _get_last_trading_day(self) -> date:
+        today = date.today()
+        weekday = today.weekday()
+        if weekday == 5:
+            return today - timedelta(days=1)
+        elif weekday == 6:
+            return today - timedelta(days=2)
+        return today
 
-    def _merge_flows(self, code: str, money_flows: List[MoneyFlow]) -> None:
-        if self._money_flows is None:
-            self._money_flows = {}
-
-        if code not in self._money_flows:
-            self._money_flows[code] = {}
-
-        for money_flow in money_flows:
-            self._money_flows[code][money_flow.time.date()] = money_flow
-
-    def _save_to_csv(self, money_flows: Optional[List[MoneyFlow]]) -> None:
-        if money_flows is None:
-            print("没有资金流向数据可保存")
+    def _save_flows_to_db(self, money_flows: List[MoneyFlow]) -> None:
+        if not money_flows:
             return
 
-        print(f"保存资金流向缓存到 {self._cache_path}，共 {len(money_flows)} 条记录")
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        with open(self._cache_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['code', 'date', 'main_net', 'main_net_pct', 'net_amount',
-                             'super_large_net', 'large_net', 'medium_net', 'small_net'])
-            for money_flow in money_flows:
-                writer.writerow([
-                    money_flow.code,
-                    money_flow.time.date().isoformat(),
-                    money_flow.main_net,
-                    # money_flow.main_net_pct,
-                    money_flow.net_amount,
-                    money_flow.super_large_net,
-                    money_flow.large_net,
-                    money_flow.medium_net,
-                    money_flow.small_net,
-                ])
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with get_db() as conn:
+            for mf in money_flows:
+                trade_date = mf.time.strftime("%Y-%m-%d")
+                conn.execute(
+                    """INSERT INTO money_flows (
+                           code, trade_date, period,
+                           main_cnt, main_net, net_amount,
+                           huge_net, large_net, medium_net, small_net,
+                           huge_cnt, large_cnt, medium_cnt, small_cnt,
+                           created_at, updated_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(code, trade_date, period) DO UPDATE SET
+                           main_cnt   = excluded.main_cnt,
+                           main_net   = excluded.main_net,
+                           net_amount = excluded.net_amount,
+                           huge_net   = excluded.huge_net,
+                           large_net  = excluded.large_net,
+                           medium_net = excluded.medium_net,
+                           small_net  = excluded.small_net,
+                           huge_cnt   = excluded.huge_cnt,
+                           large_cnt  = excluded.large_cnt,
+                           medium_cnt = excluded.medium_cnt,
+                           small_cnt  = excluded.small_cnt,
+                           updated_at = excluded.updated_at,
+                           is_deleted = 0""",
+                    (
+                        mf.code, trade_date, mf.period,
+                        mf.main_cnt, mf.main_net, mf.net_amount,
+                        mf.huge_net, mf.large_net, mf.medium_net, mf.small_net,
+                        mf.huge_cnt, mf.large_cnt, mf.medium_cnt, mf.small_cnt,
+                        now, now,
+                    ),
+                )
+
+    def find_by_code(self, code: str) -> List[MoneyFlow]:
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT code, trade_date, period,
+                          main_cnt, main_net, net_amount,
+                          huge_net, large_net, medium_net, small_net,
+                          huge_cnt, large_cnt, medium_cnt, small_cnt
+                   FROM money_flows
+                   WHERE code = ? AND period = 'day' AND is_deleted = 0
+                   ORDER BY trade_date""",
+                (code,),
+            ).fetchall()
+
+            return [self._row_to_money_flow(row) for row in rows]
+
+    def find_by_code_and_date_range(self, code: str, start_date: date, end_date: date) -> List[MoneyFlow]:
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT code, trade_date, period,
+                          main_cnt, main_net, net_amount,
+                          huge_net, large_net, medium_net, small_net,
+                          huge_cnt, large_cnt, medium_cnt, small_cnt
+                   FROM money_flows
+                   WHERE code = ? AND period = 'day' AND is_deleted = 0
+                     AND trade_date >= ? AND trade_date <= ?
+                   ORDER BY trade_date""",
+                (code, start_date.isoformat(), end_date.isoformat()),
+            ).fetchall()
+
+            return [self._row_to_money_flow(row) for row in rows]
+
+    @staticmethod
+    def _row_to_money_flow(row) -> MoneyFlow:
+        trade_date = datetime.strptime(row["trade_date"], "%Y-%m-%d")
+        return MoneyFlow.daily(
+            code=row["code"],
+            date=trade_date,
+            main_cnt=row["main_cnt"] or 0,
+            main_net=row["main_net"] or 0.0,
+            net_amount=row["net_amount"] or 0.0,
+            huge_net=row["huge_net"],
+            large_net=row["large_net"],
+            medium_net=row["medium_net"],
+            small_net=row["small_net"],
+            huge_cnt=row["huge_cnt"],
+            large_cnt=row["large_cnt"],
+            medium_cnt=row["medium_cnt"],
+            small_cnt=row["small_cnt"],
+        )

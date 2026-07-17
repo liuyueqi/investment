@@ -45,3 +45,6 @@ dist/
 # Tushare token file
 .tushare_token
 
+*.db-shm
+*.db-wal
+data/

@@ -17,20 +17,43 @@ class MoneyFlow:
     code: str                     # 股票代码
     time: datetime                # 时间点（分钟/日/周/月 的起始时刻）
     period: str                   # 粒度: "1min", "5min", "day", "week", "month"
-    main_cnt: int                 # 主力笔数（可选）
-    main_net: float               # 主力资金净流入（万元）
-    # main_net_pct: float = 0.0     # 主力净流入占比（%）
+    main_cnt: int = 0             # 主力笔数
+    main_net: float = 0.0         # 主力资金净流入（万元）
     net_amount: float = 0.0       # 净主动买入额（万元）
-    
-    # 可选明细（如果API提供）
-    super_large_cnt: Optional[int] = None # 超大单笔数
-    super_large_net: Optional[float] = None # 超大单净流入（万元）
-    large_cnt: Optional[int] = None # 大单笔数
-    large_net: Optional[float] = None # 大单净流入（万元）
-    medium_cnt: Optional[int] = None # 中单笔数
-    medium_net: Optional[float] = None # 中单净流入（万元）
-    small_cnt: Optional[int] = None # 小单笔数
-    small_net: Optional[float] = None # 小单净流入（万元）
+
+    # ========== 各粒度买入/卖出明细 ==========
+
+    # --- 超大单（Huge，原 super_large） ---
+    huge_buy_cnt: Optional[int] = None     # 超大单买入笔数
+    huge_buy_net: Optional[float] = None   # 超大单买入金额（万元）
+    huge_sell_cnt: Optional[int] = None    # 超大单卖出笔数
+    huge_sell_net: Optional[float] = None  # 超大单卖出金额（万元）
+    huge_cnt: Optional[int] = None         # 超大单净笔数
+    huge_net: Optional[float] = None       # 超大单净流入（万元）
+
+    # --- 大单（Large） ---
+    large_buy_cnt: Optional[int] = None
+    large_buy_net: Optional[float] = None
+    large_sell_cnt: Optional[int] = None
+    large_sell_net: Optional[float] = None
+    large_cnt: Optional[int] = None
+    large_net: Optional[float] = None
+
+    # --- 中单（Medium） ---
+    medium_buy_cnt: Optional[int] = None
+    medium_buy_net: Optional[float] = None
+    medium_sell_cnt: Optional[int] = None
+    medium_sell_net: Optional[float] = None
+    medium_cnt: Optional[int] = None
+    medium_net: Optional[float] = None
+
+    # --- 小单（Small） ---
+    small_buy_cnt: Optional[int] = None
+    small_buy_net: Optional[float] = None
+    small_sell_cnt: Optional[int] = None
+    small_sell_net: Optional[float] = None
+    small_cnt: Optional[int] = None
+    small_net: Optional[float] = None
 
     # ========== 核心工厂方法 ==========
 

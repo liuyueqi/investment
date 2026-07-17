@@ -73,7 +73,7 @@ class TushareAdapter(StockDataAdapter):
             money_flows = []
             for _, row in results.iterrows():
                 
-                ts_code = row.get('ts_code')
+                ts_code = row.get('ts_code', '')
                 trade_date = datetime.strptime(row['trade_date'], '%Y%m%d')
                 buy_sm_vol = row.get('buy_sm_vol', 0.0)
                 buy_sm_amount = row.get('buy_sm_amount', 0.0)
@@ -99,14 +99,31 @@ class TushareAdapter(StockDataAdapter):
                     date = trade_date,
                     main_cnt = net_mf_vol,             # 主力笔数
                     main_net = net_mf_amount,           # 主力净流入（万元）
-                    super_large_cnt = buy_elg_vol - sell_elg_vol,  # 超大单笔数
-                    super_large_net = buy_elg_amount - sell_elg_amount,  # 超大单净流入（万元）
+                    huge_buy_cnt = buy_elg_vol,               # 超大单买入笔数
+                    huge_buy_net = buy_elg_amount,           # 超大单买入金额（万元）
+                    huge_sell_cnt = sell_elg_vol,             # 超大单卖出笔数
+                    huge_sell_net = sell_elg_amount,         # 超大单卖出金额（万元）
+                    large_buy_cnt = buy_lg_vol, # 大单买入笔数
+                    large_buy_net = buy_lg_amount, # 大单买入金额（万元）
+                    large_sell_cnt = sell_lg_vol, # 大单卖出笔数
+                    large_sell_net = sell_lg_amount, # 大单卖出金额（万元）
+                    medium_buy_cnt = buy_md_vol, # 中单买入笔数
+                    medium_buy_net = buy_md_amount, # 中单买入金额（万元）
+                    medium_sell_cnt = sell_md_vol, # 中单卖出笔数
+                    medium_sell_net = sell_md_amount, # 中单卖出金额（万元）
+                    small_buy_cnt = buy_sm_vol, # 小单买入笔数
+                    small_buy_net = buy_sm_amount, # 小单买入金额（万元）
+                    small_sell_cnt = sell_sm_vol, # 小单卖出笔数
+                    small_sell_net = sell_sm_amount, # 小单卖出金额（万元）
+                    net_amount = net_mf_amount,  # 净主动买入额（万元）
+                    huge_cnt = buy_elg_vol - sell_elg_vol,  # 超大单笔数
+                    huge_net = buy_elg_amount - sell_elg_amount,  # 超大单净流入（万元）
                     large_cnt = buy_lg_vol - sell_lg_vol,          # 大单笔数
                     large_net = buy_lg_amount - sell_lg_amount,          # 大单净流入（万元）
                     medium_cnt = buy_md_vol - sell_md_vol,         # 中单笔数
                     medium_net = buy_md_amount - sell_md_amount,         # 中单净流入（万元）
                     small_cnt = buy_sm_vol - sell_sm_vol,           # 小单笔数
-                    small_net = buy_sm_amount - sell_sm_amount          # 小单净流入（万元）
+                    small_net = buy_sm_amount - sell_sm_amount,          # 小单净流入（万元）
                 )
                 money_flows.append(money_flow)
             return money_flows

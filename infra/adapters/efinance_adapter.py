@@ -94,7 +94,7 @@ class EfinanceAdapter(StockDataAdapter):
                 main_net_pct=row['主力净流入占比'],
                 # efinance 暂无此字段
                 net_amount=0.0,
-                super_large_net=row['超大单净流入'] / 10000,
+                huge_net=row['超大单净流入'] / 10000,
                 large_net=row['大单净流入'] / 10000,
                 medium_net=row['中单净流入'] / 10000,
                 small_net=row['小单净流入'] / 10000
