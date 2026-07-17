@@ -1,23 +1,42 @@
+import os
+from pathlib import Path
+
 import tushare as ts
 from datetime import date, datetime
 from typing import List, Optional
 from domain.money_flow import MoneyFlow
 from .stock_data_adapter import StockDataAdapter
-
+from context import TUSHARE_TOKEN_FILE
 
 class TushareAdapter(StockDataAdapter):
     """基于 Tushare Pro 的数据适配器"""
 
-    _TOKEN = '807a3e2496925bfdcb03c2d9011efcae6f51c056cc7a08d76948f5f4'
+    _TOKEN_FILE_ENV = 'TUSHARE_TOKEN_FILE'
+    _DEFAULT_TOKEN_FILE = TUSHARE_TOKEN_FILE
 
     def __init__(self):
         """
         初始化 Tushare 适配器
         Args:
-            token: Tushare Pro 接口 Token（在 https://tushare.pro 注册获取）
+            token_file: 可选的 Tushare Token 文件路径。优先级：参数 > 环境变量 TUSHARE_TOKEN_FILE > 项目根目录下 .tushare_token
         """
-        ts.set_token(self._TOKEN)
+        token = self._load_token()
+        ts.set_token(token)
         self._pro = ts.pro_api()
+
+    def _load_token(self) -> str:
+
+        token_file = TUSHARE_TOKEN_FILE.resolve()
+        if not token_file.exists():
+            raise FileNotFoundError(
+                f'Tushare token file not found: {token_file}.\n'
+                '请在项目根目录创建 .tushare_token 或通过环境变量 TUSHARE_TOKEN_FILE 指定路径。'
+            )
+
+        token = token_file.read_text(encoding='utf-8').strip()
+        if not token:
+            raise ValueError(f'Tushare token file is empty: {token_file}')
+        return token
 
     # ========== 资金流向（核心） ==========
 

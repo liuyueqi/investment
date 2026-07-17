@@ -42,3 +42,6 @@ dist/
 *.egg-info/
 .eggs/
 
+# Tushare token file
+.tushare_token
+
