@@ -45,19 +45,26 @@ class StockRepository:
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
+            # 1. 先将所有记录软删除（is_deleted = 1）
+            conn.execute("UPDATE stocks SET is_deleted = 1, updated_at = ?", (now,))
+
+            # 2. 对外部数据集中每条记录做 UPSERT
+            #    - 如果 code 已存在：恢复 is_deleted = 0，更新 name/market/updated_at
+            #    - 如果 code 不存在：插入新记录
             for stock in stocks:
                 conn.execute(
                     """INSERT INTO stocks (code, name, market, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?)
                        ON CONFLICT(code) DO UPDATE SET
-                           name    = excluded.name,
-                           market  = excluded.market,
+                           name       = excluded.name,
+                           market     = excluded.market,
                            updated_at = excluded.updated_at,
                            is_deleted = 0""",
                     (stock.code, stock.name, stock.market, now, now),
                 )
-        print(f"从适配器获取到 {len(stocks)} 只股票，并已存入数据库")
 
+        print(f"从适配器获取到 {len(stocks)} 只股票，并已存入数据库")
+        print(f"  - 活跃股票（is_deleted=0）: {len(stocks)}")
     def find_all(self) -> List[Stock]:
         """从数据库查询所有未删除的股票"""
         with get_db() as conn:
@@ -84,3 +91,5 @@ class StockRepository:
                 "SELECT code FROM stocks WHERE is_deleted = 0 ORDER BY code"
             ).fetchall()
             return [row["code"] for row in rows]
+
+
