@@ -12,8 +12,8 @@ def get_connection() -> sqlite3.Connection:
     """获取数据库连接"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("PRAGMA journal_mode=WAL")      # 读写并发安全
-    conn.execute("PRAGMA foreign_keys=ON")        # 外键约束
+    conn.execute("""PRAGMA journal_mode=WAL""")      # 读写并发安全
+    conn.execute("""PRAGMA foreign_keys=ON""")        # 外键约束
     conn.row_factory = sqlite3.Row               # 支持按列名访问
     return conn
 

@@ -32,7 +32,8 @@ class SectorRepository:
         """检查数据库中是否有在缓存有效期内的数据"""
         with get_db() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated FROM sectors WHERE is_deleted = 0"
+                """SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated
+                   FROM sectors WHERE is_deleted = 0"""
             ).fetchone()
             count = row["cnt"]
             if count == 0:
@@ -111,62 +112,73 @@ class SectorRepository:
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
-            # 先软删除旧的板块成员（避免外键冲突，我们先处理 members）
-            conn.execute("UPDATE sector_members SET is_deleted = 1, updated_at = ?", (now,))
+            # 先软删除旧的板块
+            conn.execute(
+                """UPDATE sectors SET is_deleted = 1, updated_at = ? WHERE is_deleted = 0""",
+                (now,),
+            )
 
             for sector in sectors.values():
-                # UPSERT 板块基本信息
-                conn.execute(
-                    """INSERT INTO sectors (code, name, type, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?)
-                       ON CONFLICT(code) DO UPDATE SET
-                           name       = excluded.name,
-                           type       = excluded.type,
-                           updated_at = excluded.updated_at,
-                           is_deleted = 0""",
-                    (sector.code, sector.name, sector.type.value, now, now),
-                )
 
-                # 插入板块成员
-                for member_code in sector.members:
+                existing = conn.execute(
+                    """SELECT 1 FROM sectors WHERE code = ?""",
+                    (sector.code,),
+                ).fetchone()
+                if existing:
+                    # UPSERT 板块基本信息
                     conn.execute(
-                        """INSERT INTO sector_members (sector_code, stock_code, created_at, updated_at)
-                           VALUES (?, ?, ?, ?)
-                           ON CONFLICT(sector_code, stock_code) DO UPDATE SET
-                               is_deleted = 0,
-                               updated_at = excluded.updated_at""",
-                        (sector.code, member_code, now, now),
+                        """INSERT INTO sectors (code, name, type, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(code) DO UPDATE SET
+                            name       = excluded.name,
+                            type       = excluded.type,
+                            updated_at = excluded.updated_at,
+                            is_deleted = 0""",
+                        (sector.code, sector.name, sector.type.value, now, now),
+                    )
+                else:
+                    # 插入新板块
+                    conn.execute(
+                        """INSERT INTO sectors (code, name, type, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (sector.code, sector.name, sector.type.value, now, now),
                     )
 
+                # 插入板块成员，先软删除旧的板块成员，再插入新的成员（避免重复插入）
+                conn.execute(
+                """UPDATE sector_members
+                   SET is_deleted = 1, updated_at = ? WHERE sector_code = ?""",
+                (now, sector.code),
+            )
+
+                for member_code in sector.members:
+                    existing = conn.execute(
+                        """SELECT 1 FROM sector_members
+                           WHERE sector_code = ? AND stock_code = ?""",
+                        (sector.code, member_code),
+                    ).fetchone()
+                    if existing:
+                        conn.execute(
+                            """UPDATE sector_members
+                               SET is_deleted = 0, updated_at = ?
+                               WHERE sector_code = ? AND stock_code = ?""",
+                            (now, sector.code, member_code),
+                        )
+                    else:
+                        conn.execute(
+                            """INSERT INTO sector_members (sector_code, stock_code, created_at, updated_at)
+                               VALUES (?, ?, ?, ?)""",
+                            (sector.code, member_code, now, now),
+                        )
         print(f"板块数据已保存到数据库，共 {len(sectors)} 个板块")
-
-    def _build_from_stocks(self, stock_codes: List[str]) -> None:
-        """保留顺序处理方法（用于小规模或测试）"""
-        sector_map: Dict[str, Sector] = {}
-        for i, stock_code in enumerate(stock_codes):
-            boards = self._adapter.get_stock_sectors(stock_code)
-            for board in boards:
-                code = board['code']
-                name = board['name']
-                if code not in sector_map:
-                    sector_map[code] = Sector(
-                        code=code,
-                        name=name,
-                        type=self._infer_type(name)
-                    )
-                sector_map[code].add_member(stock_code)
-
-            if (i + 1) % 500 == 0:
-                print(f"已处理 {i+1}/{len(stock_codes)} 只股票")
-
-        self._save_to_db(sector_map)
 
     def find_by_code(self, code: str) -> Optional[Sector]:
         """根据板块代码查询板块信息及成分股"""
         with get_db() as conn:
             # 查询板块基本信息
             row = conn.execute(
-                "SELECT code, name, type FROM sectors WHERE code = ? AND is_deleted = 0",
+                """SELECT code, name, type
+                   FROM sectors WHERE code = ? AND is_deleted = 0""",
                 (code,),
             ).fetchone()
             if row is None:
@@ -174,7 +186,9 @@ class SectorRepository:
 
             # 查询成分股
             member_rows = conn.execute(
-                "SELECT stock_code FROM sector_members WHERE sector_code = ? AND is_deleted = 0 ORDER BY stock_code",
+                """SELECT stock_code
+                   FROM sector_members
+                   WHERE sector_code = ? AND is_deleted = 0 ORDER BY stock_code""",
                 (code,),
             ).fetchall()
             members = [r["stock_code"] for r in member_rows]
@@ -190,14 +204,17 @@ class SectorRepository:
         """获取所有板块信息及成分股"""
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT code, name, type FROM sectors WHERE is_deleted = 0 ORDER BY code"
+                """SELECT code, name, type
+                   FROM sectors WHERE is_deleted = 0 ORDER BY code"""
             ).fetchall()
 
             sectors = []
             for row in rows:
                 # 查询成分股
                 member_rows = conn.execute(
-                    "SELECT stock_code FROM sector_members WHERE sector_code = ? AND is_deleted = 0 ORDER BY stock_code",
+                    """SELECT stock_code
+                       FROM sector_members
+                       WHERE sector_code = ? AND is_deleted = 0 ORDER BY stock_code""",
                     (row["code"],),
                 ).fetchall()
                 members = [r["stock_code"] for r in member_rows]

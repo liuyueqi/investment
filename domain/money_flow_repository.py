@@ -26,7 +26,8 @@ class MoneyFlowRepository:
     def _latest(self) -> bool:
         with get_db() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated FROM money_flows WHERE is_deleted = 0"
+                """SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated
+                   FROM money_flows WHERE is_deleted = 0"""
             ).fetchone()
             count = row["cnt"]
             if count == 0:
@@ -46,9 +47,9 @@ class MoneyFlowRepository:
             print("未提供股票代码列表，且无法从适配器获取股票信息，无法更新资金流向数据")
             return
 
-        last_flow_dates = self._load_last_flow_dates(stock_codes)
-
         print(f"开始更新资金流向数据，共 {len(stock_codes)} 只股票")
+
+        last_flow_dates = self._load_last_flow_dates()
         total_saved = 0
         index = 0
         for code in stock_codes:
@@ -76,19 +77,20 @@ class MoneyFlowRepository:
 
         print(f"资金流向数据更新完成，共保存 {total_saved} 条新记录")
 
-    def _load_last_flow_dates(self, stock_codes: List[str]) -> Dict[str, Optional[date]]:
+    def _load_last_flow_dates(self) -> Dict[str, Optional[date]]:
         result: Dict[str, Optional[date]] = {}
         with get_db() as conn:
-            for code in stock_codes:
-                row = conn.execute(
-                    "SELECT MAX(trade_date) AS max_date FROM money_flows WHERE code = ? AND period = 'day' AND is_deleted = 0",
-                    (code,),
-                ).fetchone()
+            rows = conn.execute(
+                """SELECT code, MAX(trade_date) AS max_date
+                   FROM money_flows
+                   WHERE period = 'day' AND is_deleted = 0 GROUP BY code"""
+            ).fetchall()
+            for row in rows:
                 max_date_str = row["max_date"]
                 if max_date_str:
-                    result[code] = datetime.strptime(max_date_str, "%Y-%m-%d").date()
+                    result[row["code"]] = datetime.strptime(max_date_str, "%Y-%m-%d").date()
                 else:
-                    result[code] = None
+                    result[row["code"]] = None
         return result
 
     def _is_up_to_date(self, last_date: Optional[date]) -> bool:
@@ -121,21 +123,7 @@ class MoneyFlowRepository:
                            huge_net, large_net, medium_net, small_net,
                            huge_cnt, large_cnt, medium_cnt, small_cnt,
                            created_at, updated_at
-                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(code, trade_date, period) DO UPDATE SET
-                           main_cnt   = excluded.main_cnt,
-                           main_net   = excluded.main_net,
-                           net_amount = excluded.net_amount,
-                           huge_net   = excluded.huge_net,
-                           large_net  = excluded.large_net,
-                           medium_net = excluded.medium_net,
-                           small_net  = excluded.small_net,
-                           huge_cnt   = excluded.huge_cnt,
-                           large_cnt  = excluded.large_cnt,
-                           medium_cnt = excluded.medium_cnt,
-                           small_cnt  = excluded.small_cnt,
-                           updated_at = excluded.updated_at,
-                           is_deleted = 0""",
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         mf.code, trade_date, mf.period,
                         mf.main_cnt, mf.main_net, mf.net_amount,

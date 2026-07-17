@@ -25,7 +25,8 @@ class StockRepository:
         """检查数据库中是否有在缓存有效期内的数据"""
         with get_db() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated FROM stocks WHERE is_deleted = 0"
+                """SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated
+                   FROM stocks WHERE is_deleted = 0"""
             ).fetchone()
             count = row["cnt"]
             if count == 0:
@@ -45,11 +46,19 @@ class StockRepository:
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
+
+            # 1. 先标记所有为删除状态
+            conn.execute(
+                """UPDATE stocks SET is_deleted = 1, updated_at = ? WHERE is_deleted = 0""",
+                (now,),
+            )
+
             for stock in stocks:
                 # 检查数据库中是否已有该记录
                 existing = conn.execute(
-                    "SELECT 1 FROM stocks WHERE code = ?", (stock.code,)
-            ).fetchone()
+                    """SELECT 1 FROM stocks WHERE code = ?""",
+                    (stock.code,),
+                ).fetchone()
                 if existing:
                     # 已有记录：更新 name/market，恢复 is_deleted = 0
                     conn.execute(
@@ -65,13 +74,13 @@ class StockRepository:
                            VALUES (?, ?, ?, ?, ?)""",
                         (stock.code, stock.name, stock.market, now, now),
                     )
-
         print(f"从适配器获取到 {len(stocks)} 只股票，并已存入数据库")
     def find_all(self) -> List[Stock]:
         """从数据库查询所有未删除的股票"""
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT code, name, market FROM stocks WHERE is_deleted = 0 ORDER BY code"
+                """SELECT code, name, market
+                   FROM stocks WHERE is_deleted = 0 ORDER BY code"""
             ).fetchall()
             return [Stock(code=row["code"], name=row["name"], market=row["market"]) for row in rows]
 
@@ -79,7 +88,8 @@ class StockRepository:
         """根据股票代码查询"""
         with get_db() as conn:
             row = conn.execute(
-                "SELECT code, name, market FROM stocks WHERE code = ? AND is_deleted = 0",
+                """SELECT code, name, market
+                   FROM stocks WHERE code = ? AND is_deleted = 0""",
                 (code,),
             ).fetchone()
             if row is None:
@@ -90,7 +100,8 @@ class StockRepository:
         """获取所有股票代码列表"""
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT code FROM stocks WHERE is_deleted = 0 ORDER BY code"
+                """SELECT code FROM stocks WHERE is_deleted = 0 ORDER BY code"""
             ).fetchall()
             return [row["code"] for row in rows]
+
 
