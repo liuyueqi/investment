@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from domain.stock import Stock
-from infra.adapters import efinance_adapter
+from infra.adapters.stock_data_adapter import StockDataAdapter
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -13,8 +13,8 @@ class StockRepository:
 
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
     
-    def __init__(self):
-        self._adapter = efinance_adapter
+    def __init__(self, adapter: StockDataAdapter):
+        self._adapter = adapter
 
     def refresh(self, force: bool = False) -> None:
         """同步外部数据到数据库
@@ -52,7 +52,6 @@ class StockRepository:
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
-            # 逐条判断：有则更新（恢复 is_deleted = 0），无则插入
             for stock in stocks:
                 existing = conn.execute(
                     """SELECT 1 FROM stocks WHERE code = ?""",

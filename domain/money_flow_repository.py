@@ -3,7 +3,8 @@ from typing import Dict, List, Optional
 from datetime import date, datetime, timedelta
 
 from domain.money_flow import MoneyFlow
-from infra.adapters import efinance_adapter, tushare_adapter
+from infra.adapters.efinance_adapter import EfinanceAdapter
+from infra.adapters.tushare_adapter import TushareAdapter
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -15,9 +16,18 @@ class MoneyFlowRepository:
     _DEFAULT_START_DAYS = 360            # 默认拉取最近 360 天数据
     _CACHE_TTL_SECONDS = 24 * 60 * 60    # 缓存有效期：1 天
 
-    def __init__(self):
-        self._efinance_adapter = efinance_adapter
-        self._tushare_adapter = tushare_adapter
+    def __init__(
+        self,
+        stock_adapter: EfinanceAdapter,
+        flow_adapter: TushareAdapter,
+    ):
+        """
+        Args:
+            stock_adapter: 用于获取股票列表的适配器
+            flow_adapter: 用于获取资金流向数据的适配器
+        """
+        self._stock_adapter = stock_adapter
+        self._flow_adapter = flow_adapter
 
     def refresh(self, stock_codes: Optional[List[str]] = None,
                 force: bool = True) -> None:
@@ -51,7 +61,7 @@ class MoneyFlowRepository:
     def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
         """从适配器获取资金流向数据，增量更新到数据库"""
         if stock_codes is None:
-            stocks = self._efinance_adapter.get_all_stock_info()
+            stocks = self._stock_adapter.get_all_stock_info()
             stock_codes = [stock.code for stock in stocks]
 
         if not stock_codes:
@@ -80,7 +90,7 @@ class MoneyFlowRepository:
             index += 1
             logger.info(f"{index}: 正在获取股票 {code} 资金流向数据 "
                   f"[{start_date} -> {today}]...")
-            flows = self._tushare_adapter.get_daily_flow(code, start_date, today)
+            flows = self._flow_adapter.get_daily_flow(code, start_date, today)
             time.sleep(self._REQUEST_INTERVAL_SECONDS)
 
             if flows:
@@ -121,9 +131,9 @@ class MoneyFlowRepository:
         """获取最近一个交易日"""
         today = date.today()
         weekday = today.weekday()
-        if weekday == 5:      # 周六 -> 周五
+        if weekday == 5:
             return today - timedelta(days=1)
-        elif weekday == 6:    # 周日 -> 周五
+        elif weekday == 6:
             return today - timedelta(days=2)
         return today
 

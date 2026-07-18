@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from domain.sector import Sector, SectorType
-from infra.adapters import efinance_adapter
+from infra.adapters.stock_data_adapter import StockDataAdapter
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -17,8 +17,8 @@ class SectorRepository:
     _CHUNK_SIZE = 50   # 每个线程处理的股票数量
     _MAX_WORKERS = 48   # 最大并发线程数
 
-    def __init__(self):
-        self._adapter = efinance_adapter
+    def __init__(self, adapter: StockDataAdapter):
+        self._adapter = adapter
         self._lock = threading.Lock()
 
     def refresh(self, stock_codes: Optional[List[str]] = None, force: bool = False) -> None:
@@ -80,7 +80,6 @@ class SectorRepository:
                     logger.error(f"线程处理异常: {e}")
                     continue
 
-                # 合并到共享 sectors
                 with self._lock:
                     for code, sector in local_map.items():
                         if code not in sectors:
@@ -119,7 +118,6 @@ class SectorRepository:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
             for sector in sectors.values():
-                # --- sectors 表：有则更新，无则插入 ---
                 existing = conn.execute(
                     """SELECT 1 FROM sectors WHERE code = ?""",
                     (sector.code,),
@@ -139,7 +137,6 @@ class SectorRepository:
                         (sector.code, sector.name, sector.type.value, now, now),
                     )
 
-                # --- sector_members 表：有则更新，无则插入 ---
                 for member_code in sector.members:
                     existing = conn.execute(
                         """SELECT 1 FROM sector_members
