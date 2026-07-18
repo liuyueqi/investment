@@ -10,19 +10,23 @@ from infra.database.connection import get_db
 
 
 class SectorRepository:
+    """板块数据仓库，管理 sectors 表和 sector_members 表"""
 
-    _CACHE_TTL_SECONDS = 24 * 60 * 60  # 1 天
-    # 并发加载配置
-    _CHUNK_SIZE = 100  # 每个线程处理的股票数量（可调整）
+    _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
+    _CHUNK_SIZE = 100   # 每个线程处理的股票数量
     _MAX_WORKERS = 16   # 最大并发线程数
 
     def __init__(self):
         self._adapter = efinance_adapter
-        # 保护对数据库并发写入的锁
         self._lock = threading.Lock()
 
     def refresh(self, stock_codes: Optional[List[str]] = None, force: bool = False) -> None:
-        """同步外部数据到数据库，并将数据加载到数据库"""
+        """同步外部数据到数据库
+        
+        Args:
+            stock_codes: 股票代码列表，为 None 则自动获取全市场
+            force: 是否强制刷新
+        """
         if not force and self._latest():
             print("数据库缓存有效，跳过刷新")
             return
@@ -45,7 +49,7 @@ class SectorRepository:
             return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
 
     def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
-        # 如果外部未传入股票列表，则尝试从适配器获取全部股票信息
+        """从适配器获取板块数据，并发处理各股票所属板块"""
         if stock_codes is None:
             stocks = self._adapter.get_all_stock_info()
             stock_codes = [stock.code for stock in stocks]
@@ -59,12 +63,13 @@ class SectorRepository:
             print("股票代码列表为空，无法构建板块数据")
             return
 
-        # 并发加载：把 stock_codes 切分为块，每个 worker 调用 adapter.get_stock_sectors
+        # 并发加载：将股票代码分块，每个线程处理一块
         sectors: Dict[str, Sector] = {}
-        chunks: List[List[str]] = [stock_codes[i:i + self._CHUNK_SIZE] for i in range(0, total, self._CHUNK_SIZE)]
+        chunks = [stock_codes[i:i + self._CHUNK_SIZE] for i in range(0, total, self._CHUNK_SIZE)]
         max_workers = min(self._MAX_WORKERS, len(chunks))
 
-        print(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块，使用 {max_workers} 个线程并发加载")
+        print(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块，"
+              f"使用 {max_workers} 个线程并发加载")
         with ThreadPoolExecutor(max_workers=max_workers) as exc:
             futures = {exc.submit(self._process_chunk, chunk): chunk for chunk in chunks}
             for fut in as_completed(futures):
@@ -87,7 +92,7 @@ class SectorRepository:
         print(f"构建完成，共 {len(sectors)} 个板块，已保存到数据库")
 
     def _process_chunk(self, chunk: List[str]) -> Dict[str, Sector]:
-        """处理一个股票代码块，返回本地的 sector_map。"""
+        """处理一个股票代码块，返回该块构建的板块映射"""
         print(f"线程 {threading.current_thread().name} 开始处理 {len(chunk)} 只股票")
         local_map: Dict[str, Sector] = {}
         for stock_code in chunk:
@@ -99,7 +104,7 @@ class SectorRepository:
                     local_map[code] = Sector(
                         code=code,
                         name=name,
-                        type=self._infer_type(name)
+                        type=self._infer_type(name),
                     )
                 local_map[code].add_member(stock_code)
         return local_map
@@ -112,51 +117,35 @@ class SectorRepository:
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
-            # 先软删除旧的板块
-            conn.execute(
-                """UPDATE sectors SET is_deleted = 1, updated_at = ? WHERE is_deleted = 0""",
-                (now,),
-            )
-
             for sector in sectors.values():
-
+                # --- sectors 表：有则更新，无则插入 ---
                 existing = conn.execute(
                     """SELECT 1 FROM sectors WHERE code = ?""",
                     (sector.code,),
                 ).fetchone()
+
                 if existing:
-                    # UPSERT 板块基本信息
                     conn.execute(
-                        """INSERT INTO sectors (code, name, type, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT(code) DO UPDATE SET
-                            name       = excluded.name,
-                            type       = excluded.type,
-                            updated_at = excluded.updated_at,
-                            is_deleted = 0""",
-                        (sector.code, sector.name, sector.type.value, now, now),
+                        """UPDATE sectors
+                           SET name = ?, type = ?, updated_at = ?, is_deleted = 0
+                           WHERE code = ?""",
+                        (sector.name, sector.type.value, now, sector.code),
                     )
                 else:
-                    # 插入新板块
                     conn.execute(
                         """INSERT INTO sectors (code, name, type, created_at, updated_at)
                            VALUES (?, ?, ?, ?, ?)""",
                         (sector.code, sector.name, sector.type.value, now, now),
                     )
 
-                # 插入板块成员，先软删除旧的板块成员，再插入新的成员（避免重复插入）
-                conn.execute(
-                """UPDATE sector_members
-                   SET is_deleted = 1, updated_at = ? WHERE sector_code = ?""",
-                (now, sector.code),
-            )
-
+                # --- sector_members 表：有则更新，无则插入 ---
                 for member_code in sector.members:
                     existing = conn.execute(
                         """SELECT 1 FROM sector_members
                            WHERE sector_code = ? AND stock_code = ?""",
                         (sector.code, member_code),
                     ).fetchone()
+
                     if existing:
                         conn.execute(
                             """UPDATE sector_members
@@ -170,25 +159,26 @@ class SectorRepository:
                                VALUES (?, ?, ?, ?)""",
                             (sector.code, member_code, now, now),
                         )
+
         print(f"板块数据已保存到数据库，共 {len(sectors)} 个板块")
 
     def find_by_code(self, code: str) -> Optional[Sector]:
         """根据板块代码查询板块信息及成分股"""
         with get_db() as conn:
-            # 查询板块基本信息
             row = conn.execute(
                 """SELECT code, name, type
-                   FROM sectors WHERE code = ? AND is_deleted = 0""",
+                   FROM sectors
+                   WHERE code = ? AND is_deleted = 0""",
                 (code,),
             ).fetchone()
             if row is None:
                 return None
 
-            # 查询成分股
             member_rows = conn.execute(
                 """SELECT stock_code
                    FROM sector_members
-                   WHERE sector_code = ? AND is_deleted = 0 ORDER BY stock_code""",
+                   WHERE sector_code = ? AND is_deleted = 0
+                   ORDER BY stock_code""",
                 (code,),
             ).fetchall()
             members = [r["stock_code"] for r in member_rows]
@@ -205,16 +195,18 @@ class SectorRepository:
         with get_db() as conn:
             rows = conn.execute(
                 """SELECT code, name, type
-                   FROM sectors WHERE is_deleted = 0 ORDER BY code"""
+                   FROM sectors
+                   WHERE is_deleted = 0
+                   ORDER BY code"""
             ).fetchall()
 
             sectors = []
             for row in rows:
-                # 查询成分股
                 member_rows = conn.execute(
                     """SELECT stock_code
                        FROM sector_members
-                       WHERE sector_code = ? AND is_deleted = 0 ORDER BY stock_code""",
+                       WHERE sector_code = ? AND is_deleted = 0
+                       ORDER BY stock_code""",
                     (row["code"],),
                 ).fetchall()
                 members = [r["stock_code"] for r in member_rows]
@@ -230,6 +222,7 @@ class SectorRepository:
 
     @staticmethod
     def _infer_type(name: str) -> SectorType:
+        """根据板块名称推断板块类型"""
         if '行业' in name or '制造' in name:
             return SectorType.INDUSTRY
         elif '概念' in name or '主题' in name:

@@ -49,14 +49,39 @@ CREATE TABLE IF NOT EXISTS money_flows (
     main_cnt        INTEGER DEFAULT 0,   -- 主力笔数
     main_net        REAL DEFAULT 0.0,    -- 主力净流入(万元)
     net_amount      REAL DEFAULT 0.0,    -- 净主动买入额(万元)
+
+    -- 超大单明细
+    huge_buy_cnt    INTEGER,             -- 超大单买入笔数
+    huge_buy_net    REAL,                -- 超大单买入金额(万元)
+    huge_sell_cnt   INTEGER,             -- 超大单卖出笔数
+    huge_sell_net   REAL,                -- 超大单卖出金额(万元)
+    huge_cnt        INTEGER,             -- 超大单净笔数
     huge_net        REAL,                -- 超大单净流入(万元)
-    large_net       REAL,                -- 大单净流入(万元)
-    medium_net      REAL,                -- 中单净流入(万元)
-    small_net       REAL,                -- 小单净流入(万元)
-    huge_cnt        INTEGER,
+
+    -- 大单明细
+    large_buy_cnt   INTEGER,
+    large_buy_net   REAL,
+    large_sell_cnt  INTEGER,
+    large_sell_net  REAL,
     large_cnt       INTEGER,
+    large_net       REAL,
+
+    -- 中单明细
+    medium_buy_cnt  INTEGER,
+    medium_buy_net  REAL,
+    medium_sell_cnt INTEGER,
+    medium_sell_net REAL,
     medium_cnt      INTEGER,
+    medium_net      REAL,
+
+    -- 小单明细
+    small_buy_cnt   INTEGER,
+    small_buy_net   REAL,
+    small_sell_cnt  INTEGER,
+    small_sell_net  REAL,
     small_cnt       INTEGER,
+    small_net       REAL,
+
     created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     is_deleted      INTEGER NOT NULL DEFAULT 0,
@@ -119,6 +144,22 @@ def init_db() -> None:
             ("sector_members", "is_deleted INTEGER NOT NULL DEFAULT 0"),
             ("money_flows", "huge_net REAL"),
             ("money_flows", "huge_cnt INTEGER"),
+            ("money_flows", "huge_buy_cnt INTEGER"),
+            ("money_flows", "huge_buy_net REAL"),
+            ("money_flows", "huge_sell_cnt INTEGER"),
+            ("money_flows", "huge_sell_net REAL"),
+            ("money_flows", "large_buy_cnt INTEGER"),
+            ("money_flows", "large_buy_net REAL"),
+            ("money_flows", "large_sell_cnt INTEGER"),
+            ("money_flows", "large_sell_net REAL"),
+            ("money_flows", "medium_buy_cnt INTEGER"),
+            ("money_flows", "medium_buy_net REAL"),
+            ("money_flows", "medium_sell_cnt INTEGER"),
+            ("money_flows", "medium_sell_net REAL"),
+            ("money_flows", "small_buy_cnt INTEGER"),
+            ("money_flows", "small_buy_net REAL"),
+            ("money_flows", "small_sell_cnt INTEGER"),
+            ("money_flows", "small_sell_net REAL"),
             ("money_flows", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("money_flows", "is_deleted INTEGER NOT NULL DEFAULT 0"),
             ("daily_quotes", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),

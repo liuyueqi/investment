@@ -1,5 +1,6 @@
 # main.py
-import sys
+# 主程序入口：初始化数据库，加载股票 / 板块 / 资金流向数据，并执行查询示例
+
 import time
 from typing import List, Optional
 
@@ -8,18 +9,20 @@ from domain.sector_repository import SectorRepository
 from domain.money_flow_repository import MoneyFlowRepository
 from infra.database.schema import init_db
 
+SEPARATOR = "=" * 50
+
 
 def init_database() -> None:
-    """初始化数据库"""
+    """初始化数据库（幂等安全，多次运行不会重复创建）"""
     init_db()
     print("数据库初始化完成!")
 
 
 def load_stocks(stock_repo: StockRepository) -> List:
     """加载股票数据"""
-    print("=" * 50)
+    print(f"\n{SEPARATOR}")
     print("1. 加载股票数据")
-    print("=" * 50)
+    print(SEPARATOR)
 
     stock_repo.refresh(force=True)
     
@@ -33,11 +36,14 @@ def load_stocks(stock_repo: StockRepository) -> List:
     return stocks
 
 
-def load_sectors(sector_repo: SectorRepository, stock_codes: Optional[List[str]] = None) -> None:
+def load_sectors(
+    sector_repo: SectorRepository,
+    stock_codes: Optional[List[str]] = None,
+) -> None:
     """加载板块数据"""
-    print("\n" + "=" * 50)
+    print(f"\n{SEPARATOR}")
     print("2. 加载板块数据")
-    print("=" * 50)
+    print(SEPARATOR)
 
     try:
         sector_repo.refresh(stock_codes, force=True)
@@ -47,25 +53,33 @@ def load_sectors(sector_repo: SectorRepository, stock_codes: Optional[List[str]]
             print("前5个板块：")
             for sector in sectors[:5]:
                 member_count = len(sector.members)
-                print(f"  {sector.code} - {sector.name} ({sector.type.value}) - {member_count} 只成分股")
+                print(f"  {sector.code} - {sector.name} ({sector.type.value}) - "
+                      f"{member_count} 只成分股")
     except ValueError as e:
         print(f"加载板块数据失败: {e}")
 
 
-def load_money_flows(money_flow_repo: MoneyFlowRepository, stock_codes: Optional[List[str]] = None) -> None:
+def load_money_flows(
+    money_flow_repo: MoneyFlowRepository,
+    stock_codes: Optional[List[str]] = None,
+) -> None:
     """加载资金流向数据"""
-    print("\n" + "=" * 50)
+    print(f"\n{SEPARATOR}")
     print("3. 加载资金流向数据")
-    print("=" * 50)
+    print(SEPARATOR)
 
     money_flow_repo.refresh(stock_codes, force=True)
 
 
-def query_examples(stock_repo: StockRepository, sector_repo: SectorRepository, money_flow_repo: MoneyFlowRepository) -> None:
+def query_examples(
+    stock_repo: StockRepository,
+    sector_repo: SectorRepository,
+    money_flow_repo: MoneyFlowRepository,
+) -> None:
     """查询示例"""
-    print("\n" + "=" * 50)
+    print(f"\n{SEPARATOR}")
     print("4. 查询示例")
-    print("=" * 50)
+    print(SEPARATOR)
 
     # 查询指定股票
     code = "000001"
@@ -111,14 +125,13 @@ def main():
     load_sectors(sector_repo, stock_codes)
 
     # 第3步：加载资金流向
-    limited_codes = stock_codes
-    load_money_flows(money_flow_repo, limited_codes)
+    load_money_flows(money_flow_repo, stock_codes)
 
     # 第4步：查询示例
     query_examples(stock_repo, sector_repo, money_flow_repo)
 
     elapsed = time.time() - start_time
-    print(f"\n{'=' * 50}")
+    print(f"\n{SEPARATOR}")
     print(f"执行完成，耗时 {elapsed:.2f} 秒")
 
 
