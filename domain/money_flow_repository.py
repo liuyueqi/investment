@@ -10,9 +10,9 @@ from infra.database.connection import get_db
 class MoneyFlowRepository:
     """资金流向数据仓库，管理 money_flows 表"""
 
-    _REQUEST_INTERVAL_SECONDS = 0.3     # 每次接口请求间隔（秒）
-    _DEFAULT_START_DAYS = 90            # 默认拉取最近 90 天数据
-    _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
+    _REQUEST_INTERVAL_SECONDS = 0.3      # 每次接口请求间隔（秒）
+    _DEFAULT_START_DAYS = 360            # 默认拉取最近 360 天数据
+    _CACHE_TTL_SECONDS = 24 * 60 * 60    # 缓存有效期：1 天
 
     def __init__(self):
         self._efinance_adapter = efinance_adapter

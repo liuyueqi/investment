@@ -13,8 +13,8 @@ class SectorRepository:
     """板块数据仓库，管理 sectors 表和 sector_members 表"""
 
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
-    _CHUNK_SIZE = 100   # 每个线程处理的股票数量
-    _MAX_WORKERS = 16   # 最大并发线程数
+    _CHUNK_SIZE = 50   # 每个线程处理的股票数量
+    _MAX_WORKERS = 48   # 最大并发线程数
 
     def __init__(self):
         self._adapter = efinance_adapter
