@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from domain.stock import Stock
 from infra.adapters import efinance_adapter
 from infra.database.connection import get_db
+from infra.log import logger
 
 
 class StockRepository:
@@ -22,7 +23,7 @@ class StockRepository:
             force: 是否强制刷新（无视缓存有效期）
         """
         if not force and self._latest():
-            print("数据库缓存有效，跳过刷新")
+            logger.info("数据库缓存有效，跳过刷新")
             return
         self._update_from_adapter()
 
@@ -46,7 +47,7 @@ class StockRepository:
         """从适配器获取全市场股票，增量更新到数据库"""
         stocks = self._adapter.get_all_stock_info()
         if not stocks:
-            print("获取股票列表失败")
+            logger.warning("获取股票列表失败")
             return
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -70,7 +71,7 @@ class StockRepository:
                            VALUES (?, ?, ?, ?, ?)""",
                         (stock.code, stock.name, stock.market, now, now),
                     )
-        print(f"从适配器获取到 {len(stocks)} 只股票，并已存入数据库")
+        logger.info(f"从适配器获取到 {len(stocks)} 只股票，并已存入数据库")
 
     def find_all(self) -> List[Stock]:
         """查询所有未删除的股票"""

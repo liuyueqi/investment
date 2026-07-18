@@ -1,5 +1,6 @@
 # infra/database/schema.py
 from .connection import get_connection, DB_PATH
+from infra.log import logger
 
 # ============================================================
 # 表结构定义
@@ -169,7 +170,7 @@ def init_db() -> None:
         for idx in CREATE_INDEXES:
             conn.execute(idx)
         conn.commit()
-        print(f"数据库初始化完成: {conn.execute('PRAGMA database_list').fetchone()}")
-        print(f"数据库文件路径: {DB_PATH}")
+        logger.info(f"数据库初始化完成: {conn.execute('PRAGMA database_list').fetchone()}")
+        logger.info(f"数据库文件路径: {DB_PATH}")
     finally:
         conn.close()

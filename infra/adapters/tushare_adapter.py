@@ -7,6 +7,7 @@ from typing import List, Optional
 from domain.money_flow import MoneyFlow
 from .stock_data_adapter import StockDataAdapter
 from context import TUSHARE_TOKEN_FILE
+from infra.log import logger
 
 class TushareAdapter(StockDataAdapter):
     """基于 Tushare Pro 的数据适配器"""
@@ -128,7 +129,7 @@ class TushareAdapter(StockDataAdapter):
                 money_flows.append(money_flow)
             return money_flows
         except Exception as e:
-            print(f"获取股票 {code} 资金流向失败: {e}")
+            logger.error(f"获取股票 {code} 资金流向失败: {e}")
             return []
 
     # ========== 辅助方法 ==========

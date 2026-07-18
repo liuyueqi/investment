@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 from domain.sector import Sector, SectorType
 from infra.adapters import efinance_adapter
 from infra.database.connection import get_db
+from infra.log import logger
 
 
 class SectorRepository:
@@ -28,7 +29,7 @@ class SectorRepository:
             force: 是否强制刷新
         """
         if not force and self._latest():
-            print("数据库缓存有效，跳过刷新")
+            logger.info("数据库缓存有效，跳过刷新")
             return
         self._update_from_adapter(stock_codes)
 
@@ -55,12 +56,12 @@ class SectorRepository:
             stock_codes = [stock.code for stock in stocks]
 
         if not stock_codes:
-            print("获取股票代码列表失败，无法构建板块数据")
+            logger.warning("获取股票代码列表失败，无法构建板块数据")
             return
 
         total = len(stock_codes)
         if total == 0:
-            print("股票代码列表为空，无法构建板块数据")
+            logger.warning("股票代码列表为空，无法构建板块数据")
             return
 
         # 并发加载：将股票代码分块，每个线程处理一块
@@ -68,7 +69,7 @@ class SectorRepository:
         chunks = [stock_codes[i:i + self._CHUNK_SIZE] for i in range(0, total, self._CHUNK_SIZE)]
         max_workers = min(self._MAX_WORKERS, len(chunks))
 
-        print(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块，"
+        logger.info(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块，"
               f"使用 {max_workers} 个线程并发加载")
         with ThreadPoolExecutor(max_workers=max_workers) as exc:
             futures = {exc.submit(self._process_chunk, chunk): chunk for chunk in chunks}
@@ -76,7 +77,7 @@ class SectorRepository:
                 try:
                     local_map = fut.result()
                 except Exception as e:
-                    print(f"线程处理异常: {e}")
+                    logger.error(f"线程处理异常: {e}")
                     continue
 
                 # 合并到共享 sectors
@@ -89,11 +90,11 @@ class SectorRepository:
                                 sectors[code].add_member(c)
 
         self._save_to_db(sectors)
-        print(f"构建完成，共 {len(sectors)} 个板块，已保存到数据库")
+        logger.info(f"构建完成，共 {len(sectors)} 个板块，已保存到数据库")
 
     def _process_chunk(self, chunk: List[str]) -> Dict[str, Sector]:
         """处理一个股票代码块，返回该块构建的板块映射"""
-        print(f"线程 {threading.current_thread().name} 开始处理 {len(chunk)} 只股票")
+        logger.info(f"线程 {threading.current_thread().name} 开始处理 {len(chunk)} 只股票")
         local_map: Dict[str, Sector] = {}
         for stock_code in chunk:
             boards = self._adapter.get_stock_sectors(stock_code)
@@ -112,7 +113,7 @@ class SectorRepository:
     def _save_to_db(self, sectors: Dict[str, Sector]) -> None:
         """将板块数据写入数据库（sectors 表 + sector_members 表）"""
         if not sectors:
-            print("警告：没有板块数据可保存")
+            logger.warning("警告：没有板块数据可保存")
             return
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -160,7 +161,7 @@ class SectorRepository:
                             (sector.code, member_code, now, now),
                         )
 
-        print(f"板块数据已保存到数据库，共 {len(sectors)} 个板块")
+        logger.info(f"板块数据已保存到数据库，共 {len(sectors)} 个板块")
 
     def find_by_code(self, code: str) -> Optional[Sector]:
         """根据板块代码查询板块信息及成分股"""

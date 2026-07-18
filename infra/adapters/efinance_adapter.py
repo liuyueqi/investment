@@ -7,6 +7,7 @@ from domain.stock import Stock
 from domain.money_flow import MoneyFlow
 from domain.daily_quote import DailyQuote
 from .stock_data_adapter import StockDataAdapter
+from infra.log import logger
 
 class EfinanceAdapter(StockDataAdapter):
     """基于 efinance 的数据适配器"""
@@ -20,7 +21,7 @@ class EfinanceAdapter(StockDataAdapter):
             try:
                 df = ef.stock.get_members(idx)
                 if df is None or df.empty:
-                    print(f"获取指数 {idx} 成分股失败")
+                    logger.warning(f"获取指数 {idx} 成分股失败")
                     continue
                 
                 # 确定列名
@@ -37,7 +38,7 @@ class EfinanceAdapter(StockDataAdapter):
                     stock_map[code] = Stock(code=code, name=name, market=market)
                     
             except Exception as e:
-                print(f"获取指数 {idx} 成分股异常: {e}")
+                logger.error(f"获取指数 {idx} 成分股异常: {e}")
                 continue
         
         return list(stock_map.values())
@@ -52,7 +53,7 @@ class EfinanceAdapter(StockDataAdapter):
                 for _, row in df.iterrows()
             ]
         except Exception as e:
-            print(f"获取 {stock_code} 所属板块失败: {e}")
+            logger.warning(f"获取 {stock_code} 所属板块失败: {e}")
             return []
     
     def get_daily_flow(
@@ -65,9 +66,9 @@ class EfinanceAdapter(StockDataAdapter):
         获取日级资金流向数据
         """
         # 1. 从 efinance 获取原始数据
-        print(f"正在获取 {code} 的资金流向数据...")
+        logger.info(f"正在获取 {code} 的资金流向数据...")
         df = ef.stock.get_history_bill(code)
-        print(f"获取到 {len(df)} 条资金流向数据")
+        logger.info(f"获取到 {len(df)} 条资金流向数据")
         
         # 2. 将日期列转换为 date 对象
         df['日期'] = pd.to_datetime(df['日期']).dt.date

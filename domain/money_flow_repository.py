@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from domain.money_flow import MoneyFlow
 from infra.adapters import efinance_adapter, tushare_adapter
 from infra.database.connection import get_db
+from infra.log import logger
 
 
 class MoneyFlowRepository:
@@ -27,7 +28,7 @@ class MoneyFlowRepository:
             force: 是否强制刷新
         """
         if not force and self._latest():
-            print("数据库缓存有效，跳过刷新")
+            logger.info("数据库缓存有效，跳过刷新")
             return
         self._update_from_adapter(stock_codes)
 
@@ -54,10 +55,10 @@ class MoneyFlowRepository:
             stock_codes = [stock.code for stock in stocks]
 
         if not stock_codes:
-            print("未提供股票代码列表，且无法从适配器获取股票信息，无法更新资金流向数据")
+            logger.warning("未提供股票代码列表，且无法从适配器获取股票信息，无法更新资金流向数据")
             return
 
-        print(f"开始更新资金流向数据，共 {len(stock_codes)} 只股票")
+        logger.info(f"开始更新资金流向数据，共 {len(stock_codes)} 只股票")
         last_flow_dates = self._load_last_flow_dates()
         total_saved = 0
         index = 0
@@ -77,7 +78,7 @@ class MoneyFlowRepository:
                 continue
 
             index += 1
-            print(f"{index}: 正在获取股票 {code} 资金流向数据 "
+            logger.info(f"{index}: 正在获取股票 {code} 资金流向数据 "
                   f"[{start_date} -> {today}]...")
             flows = self._tushare_adapter.get_daily_flow(code, start_date, today)
             time.sleep(self._REQUEST_INTERVAL_SECONDS)
@@ -86,7 +87,7 @@ class MoneyFlowRepository:
                 self._save_flows_to_db(flows)
                 total_saved += len(flows)
 
-        print(f"资金流向数据更新完成，共保存 {total_saved} 条新记录")
+        logger.info(f"资金流向数据更新完成，共保存 {total_saved} 条新记录")
 
     def _load_last_flow_dates(self) -> Dict[str, Optional[date]]:
         """查询每只股票已有的最后交易日期"""
