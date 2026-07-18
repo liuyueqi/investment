@@ -109,63 +109,6 @@ CREATE TABLE IF NOT EXISTS daily_quotes (
 );
 """
 
-# 资金流聚合数据（与原始 money_flows 数据分离，按 entity_type + entity_code + trade_date 唯一标识）
-CREATE_MONEY_FLOW_AGGREGATION_TABLE = """
-CREATE TABLE IF NOT EXISTS money_flow_aggregation (
-    entity_type                     TEXT NOT NULL,      -- 'stock' / 'sector'
-    entity_code                     TEXT NOT NULL,      -- 股票代码 / 板块代码
-    trade_date                      TEXT NOT NULL,      -- 数据日期
-    period                          TEXT NOT NULL DEFAULT 'day',
-
-    -- 累计主要指标
-    cumulative_main_net             REAL DEFAULT 0.0,
-    cumulative_main_cnt             INTEGER DEFAULT 0,
-    cumulative_net_amount           REAL DEFAULT 0.0,
-
-    -- 超大单累计
-    cumulative_huge_net             REAL,
-    cumulative_huge_buy_net         REAL,
-    cumulative_huge_sell_net        REAL,
-    cumulative_huge_cnt             INTEGER,
-    cumulative_huge_buy_cnt         INTEGER,
-    cumulative_huge_sell_cnt        INTEGER,
-
-    -- 大单累计
-    cumulative_large_net            REAL,
-    cumulative_large_buy_net        REAL,
-    cumulative_large_sell_net       REAL,
-    cumulative_large_cnt            INTEGER,
-    cumulative_large_buy_cnt        INTEGER,
-    cumulative_large_sell_cnt       INTEGER,
-
-    -- 中单累计
-    cumulative_medium_net           REAL,
-    cumulative_medium_buy_net       REAL,
-    cumulative_medium_sell_net      REAL,
-    cumulative_medium_cnt           INTEGER,
-    cumulative_medium_buy_cnt       INTEGER,
-    cumulative_medium_sell_cnt      INTEGER,
-
-    -- 小单累计
-    cumulative_small_net            REAL,
-    cumulative_small_buy_net        REAL,
-    cumulative_small_sell_net       REAL,
-    cumulative_small_cnt            INTEGER,
-    cumulative_small_buy_cnt        INTEGER,
-    cumulative_small_sell_cnt       INTEGER,
-
-    -- 统计元数据
-    data_start_date                 TEXT,
-    data_end_date                   TEXT,
-    trading_days_count              INTEGER DEFAULT 0,
-
-    created_at                      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    updated_at                      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-
-    PRIMARY KEY (entity_type, entity_code, trade_date, period)
-);
-"""
-
 # 索引（加速查询）
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_money_flows_date ON money_flows(trade_date);",
@@ -173,8 +116,6 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_code ON daily_quotes(code);",
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_date ON daily_quotes(trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_sector_members_stock ON sector_members(stock_code);",
-    "CREATE INDEX IF NOT EXISTS idx_mf_agg_entity ON money_flow_aggregation(entity_type, entity_code);",
-    "CREATE INDEX IF NOT EXISTS idx_mf_agg_date ON money_flow_aggregation(trade_date);",
 ]
 
 
@@ -194,7 +135,6 @@ def init_db() -> None:
         conn.execute(CREATE_SECTOR_MEMBERS_TABLE)
         conn.execute(CREATE_MONEY_FLOWS_TABLE)
         conn.execute(CREATE_DAILY_QUOTES_TABLE)
-        conn.execute(CREATE_MONEY_FLOW_AGGREGATION_TABLE)
         for table, column in [
             ("stocks", "ts_code TEXT"),
             ("stocks", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),

@@ -17,7 +17,6 @@ class Downloader:
         self._stock_repo = container.stock_repo()
         self._sector_repo = container.sector_repo()
         self._money_flow_repo = container.money_flow_repo()
-        self._aggregator = container.money_flow_aggregator()
 
     # ── 数据库初始化 ──────────────────────────────────────────
 
@@ -72,14 +71,6 @@ class Downloader:
 
         self._money_flow_repo.refresh(stock_codes, force=True)
 
-    def aggregate_money_flows(self, stock_codes: Optional[List[str]] = None) -> None:
-        """聚合资金流向数据（计算累计净流入）"""
-        logger.info(f"\n{SEPARATOR}")
-        logger.info("4. 聚合资金流向数据")
-        logger.info(SEPARATOR)
-
-        self._aggregator.aggregate_all(stock_codes)
-
     # ── 完整流程 ──────────────────────────────────────────────
 
     def download_all(self, stock_codes: Optional[List[str]] = None) -> List:
@@ -104,9 +95,6 @@ class Downloader:
 
         # 第3步：下载资金流向
         self.download_money_flows(codes)
-
-        # 第4步：聚合资金流向
-        self.aggregate_money_flows(codes)
 
         elapsed = time.time() - start_time
         logger.info(f"\n{SEPARATOR}")
