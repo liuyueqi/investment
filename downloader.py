@@ -3,10 +3,7 @@
 import time
 from typing import List, Optional
 
-from domain.stock_repository import StockRepository
-from domain.sector_repository import SectorRepository
-from domain.money_flow_repository import MoneyFlowRepository
-from infra.container import get_container
+from infra.container import container
 from infra.database.schema import init_db
 from infra.log import logger
 
@@ -14,26 +11,17 @@ SEPARATOR = "=" * 50
 
 
 class Downloader:
-    """数据下载器，协调 Repository 从外部接口下载数据到本地数据库"""
+    """数据下载器，通过 IoC 容器获取 Repository 执行数据下载"""
 
     def __init__(self):
-        """通过 IoC 容器自动获取各 Repository 实例"""
-        container = get_container()
-
-        # 注册 Repository 到容器（消费 adapter 依赖）
-        container.register(StockRepository, singleton=True)
-        container.register(SectorRepository, singleton=True)
-        container.register(MoneyFlowRepository, singleton=True)
-
-        self._stock_repo = container.resolve(StockRepository)
-        self._sector_repo = container.resolve(SectorRepository)
-        self._money_flow_repo = container.resolve(MoneyFlowRepository)
+        self._stock_repo = container.stock_repo()
+        self._sector_repo = container.sector_repo()
+        self._money_flow_repo = container.money_flow_repo()
 
     # ── 数据库初始化 ──────────────────────────────────────────
 
     @staticmethod
     def init_database() -> None:
-        """初始化数据库（幂等安全，多次运行不会重复创建）"""
         init_db()
         logger.info("数据库初始化完成!")
 
@@ -115,19 +103,12 @@ class Downloader:
         return stocks
 
 
-# 便捷函数，兼容旧调用方式
+# 便捷函数
 _default_downloader: Optional[Downloader] = None
 
 
 def download_all(stock_codes: Optional[List[str]] = None) -> List:
-    """便捷函数：使用默认 Downloader 执行完整数据下载
-
-    Args:
-        stock_codes: 可选的股票代码列表，为 None 则全量下载
-
-    Returns:
-        下载完成后的股票列表
-    """
+    """使用默认 Downloader 执行数据下载"""
     global _default_downloader
     if _default_downloader is None:
         _default_downloader = Downloader()
