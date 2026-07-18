@@ -7,6 +7,8 @@ from infra.adapters.tushare_adapter import TushareAdapter
 from domain.stock_repository import StockRepository
 from domain.sector_repository import SectorRepository
 from domain.money_flow_repository import MoneyFlowRepository
+from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
+from domain.money_flow_aggregator import MoneyFlowAggregator
 
 
 class AppContainer(containers.DeclarativeContainer):
@@ -31,6 +33,18 @@ class AppContainer(containers.DeclarativeContainer):
         MoneyFlowRepository,
         stock_adapter=efinance_adapter,
         flow_adapter=tushare_adapter,
+    )
+
+    money_flow_aggregation_repo = providers.Singleton(
+        MoneyFlowAggregationRepository,
+    )
+
+    # ── 聚合器（单例，自动注入 Repository） ──────────────────
+    money_flow_aggregator = providers.Singleton(
+        MoneyFlowAggregator,
+        money_flow_repo=money_flow_repo,
+        sector_repo=sector_repo,
+        agg_repo=money_flow_aggregation_repo,
     )
 
 
