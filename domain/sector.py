@@ -23,3 +23,6 @@ class Sector:
         """添加成分股代码（去重）"""
         if stock_code not in self.members:
             self.members.append(stock_code)
+
+    def __str__(self) -> str:
+        return f"{self.name}（{self.code}）"

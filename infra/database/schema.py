@@ -109,6 +109,61 @@ CREATE TABLE IF NOT EXISTS daily_quotes (
 );
 """
 
+# 资金流聚合数据（与原始 money_flows 数据分离，按 entity_type + entity_code + trade_date 唯一标识）
+CREATE_MONEY_FLOW_AGGREGATION_TABLE = """
+CREATE TABLE IF NOT EXISTS money_flow_aggregation (
+    code                            TEXT NOT NULL,      -- 股票代码 / 板块代码
+    type                            TEXT NOT NULL,      -- 'stock' / 'sector'
+    start_date                      TEXT NOT NULL,      -- 统计期的起始日期
+    end_date                        TEXT NOT NULL,      -- 统计期的结束日期
+    trading_days                    INTEGER DEFAULT 1,
+    is_acaccumulative               INTEGER NOT NULL,   -- 是否为资金流累计总和
+
+    -- 累计主要指标
+    main_net             REAL DEFAULT 0.0,
+    main_cnt             INTEGER DEFAULT 0,
+    net_amount           REAL DEFAULT 0.0,
+
+    -- 超大单累计
+    huge_net             REAL,
+    huge_buy_net         REAL,
+    huge_sell_net        REAL,
+    huge_cnt             INTEGER,
+    huge_buy_cnt         INTEGER,
+    huge_sell_cnt        INTEGER,
+
+    -- 大单累计
+    large_net            REAL,
+    large_buy_net        REAL,
+    large_sell_net       REAL,
+    large_cnt            INTEGER,
+    large_buy_cnt        INTEGER,
+    large_sell_cnt       INTEGER,
+
+    -- 中单累计
+    medium_net           REAL,
+    medium_buy_net       REAL,
+    medium_sell_net      REAL,
+    medium_cnt           INTEGER,
+    medium_buy_cnt       INTEGER,
+    medium_sell_cnt      INTEGER,
+
+    -- 小单累计
+    small_net            REAL,
+    small_buy_net        REAL,
+    small_sell_net       REAL,
+    small_cnt            INTEGER,
+    small_buy_cnt        INTEGER,
+    small_sell_cnt       INTEGER,
+
+    -- 元数据
+    created_at                      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at                      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+
+    PRIMARY KEY (code, type, start_date, end_date)
+);
+"""
+
 # 索引（加速查询）
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_money_flows_date ON money_flows(trade_date);",
@@ -116,6 +171,7 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_code ON daily_quotes(code);",
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_date ON daily_quotes(trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_sector_members_stock ON sector_members(stock_code);",
+    "CREATE INDEX IF NOT EXISTS idx_mf_agg_days ON money_flow_aggregation(end_date, trading_days, type);",
 ]
 
 
@@ -135,6 +191,7 @@ def init_db() -> None:
         conn.execute(CREATE_SECTOR_MEMBERS_TABLE)
         conn.execute(CREATE_MONEY_FLOWS_TABLE)
         conn.execute(CREATE_DAILY_QUOTES_TABLE)
+        conn.execute(CREATE_MONEY_FLOW_AGGREGATION_TABLE)
         for table, column in [
             ("stocks", "ts_code TEXT"),
             ("stocks", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),

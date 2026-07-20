@@ -7,3 +7,6 @@ class Stock:
     code: str         # 完整代码，如 '000001'
     name: str         # 股票名称，如 '平安银行'
     market: str       # 市场：SH / SZ / BJ
+
+    def __str__(self) -> str:
+        return f"{self.name}（{self.code}）"

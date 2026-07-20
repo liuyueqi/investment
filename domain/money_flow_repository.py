@@ -244,9 +244,59 @@ class MoneyFlowRepository:
                 (code, start_date.isoformat(), end_date.isoformat()),
             ).fetchall()
             return [self._row_to_money_flow(row) for row in rows]
+        
+    _BATCH_SIZE = 500
 
-    @staticmethod
-    def _row_to_money_flow(row) -> MoneyFlow:
+    def get_date_range(self, *codes: str) -> tuple[Optional[date], Optional[date]]:
+        """获取指定股票的最早和最晚的资金流向记录（按 code 分批查询，返回所有 code 的合并范围）"""
+        
+        if not codes:
+            return (None, None)
+
+        earliest_date: Optional[date] = None
+        latest_date: Optional[date] = None
+
+        for i in range(0, len(codes), self._BATCH_SIZE):
+            
+            batch = codes[i:i + self._BATCH_SIZE]
+            placeholders = ','.join(['?' for _ in batch])
+            sql = f"""SELECT
+                               MIN(trade_date) as start_date,
+                               MAX(trade_date) as end_date
+                          FROM money_flows
+                         WHERE code IN ({placeholders})
+                           AND period = 'day'
+                           AND is_deleted = 0"""
+            
+            with get_db() as conn:
+                row = conn.execute(sql, batch).fetchone()
+                if row and row['start_date']:
+                    start_date = datetime.strptime(row['start_date'], '%Y-%m-%d').date()
+                    end_date = datetime.strptime(row['end_date'], '%Y-%m-%d').date()
+                    if earliest_date is None or start_date < earliest_date:
+                        earliest_date = start_date
+                    if latest_date is None or end_date > latest_date:
+                        latest_date = end_date
+                        
+        return (earliest_date, latest_date)
+
+        for i in range(0, len(codes), self._BATCH_SIZE):
+            batch = codes[i:i + self._BATCH_SIZE]
+            placeholders = ','.join(['?' for _ in batch])
+            sql = f"""SELECT code,
+                               MIN(trade_date) as start_date,
+                               MAX(trade_date) as end_date
+                          FROM money_flows
+                         WHERE code IN ({placeholders})
+                           AND period = 'day'
+                           AND is_deleted = 0
+                         GROUP BY code"""
+            with get_db() as conn:
+                rows = conn.execute(sql, batch).fetchall()
+                for row in rows:
+                    result[row['code']] = (row['start_date'], row['end_date'])
+        return result
+    def _row_to_money_flow(self, row) -> MoneyFlow:
         """将数据库行记录转换为 MoneyFlow 实体"""
         trade_date = datetime.strptime(row["trade_date"], "%Y-%m-%d")
         return MoneyFlow.daily(
