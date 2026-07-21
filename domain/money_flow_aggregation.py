@@ -12,16 +12,23 @@ start_date ~ end_date 表示该累计值覆盖的时间范围。
 
 from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 from typing import Optional
 
 from domain.money_flow import MoneyFlow
 
 
+class AggregationType(str, Enum):
+    """聚合数据类型枚举"""
+    STOCK = "stock"
+    SECTOR = "sector"
+
+
 @dataclass
 class MoneyFlowAggregation:
     
-    TYPE_STOCK = 'stock'
-    TYPE_SECTOR = 'sector'
+    TYPE_STOCK = AggregationType.STOCK
+    TYPE_SECTOR = AggregationType.SECTOR
 
     """资金流聚合数据（与原始 money_flows 数据分离）"""
 
@@ -79,9 +86,9 @@ class MoneyFlowAggregation:
         first = flows[0]
         last = flows[-1]
         mf_type = (
-            MoneyFlowAggregation.TYPE_STOCK
+            AggregationType.STOCK
             if first.code and first.code[0].isdigit()
-            else MoneyFlowAggregation.TYPE_SECTOR
+            else AggregationType.SECTOR
         )
 
         # 直接累加所有 flow 的各项值
@@ -161,7 +168,7 @@ class MoneyFlowAggregation:
 
         return MoneyFlowAggregation(
             code=code,
-            type=MoneyFlowAggregation.TYPE_SECTOR,
+            type=AggregationType.SECTOR,
             name=name,
             start_date=min(m.start_date for m in members),
             end_date=max(m.end_date for m in members),

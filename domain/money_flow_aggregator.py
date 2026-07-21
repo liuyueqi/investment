@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 from domain.stock import Stock
 from domain.sector import Sector
 from domain.money_flow import MoneyFlow
-from domain.money_flow_aggregation import MoneyFlowAggregation
+from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
 from domain.stock_repository import StockRepository
 from domain.sector_repository import SectorRepository
 from domain.money_flow_repository import MoneyFlowRepository
@@ -139,7 +139,7 @@ class MoneyFlowAggregator:
 
         # 查找已有累计记录
         existing = self._money_flow_agg_repo.find_longest_accumulation(
-            stock.code, MoneyFlowAggregation.TYPE_STOCK
+            stock.code, AggregationType.STOCK
         )
 
         if existing:
@@ -207,7 +207,7 @@ class MoneyFlowAggregator:
 
         # 查找已有记录，确定从哪里开始续算
         existing = self._money_flow_agg_repo.find_latest_by_trading_days(
-            stock.code, MoneyFlowAggregation.TYPE_STOCK, window,
+            stock.code, AggregationType.STOCK, window,
         )
 
         if existing:
@@ -314,7 +314,7 @@ class MoneyFlowAggregator:
 
         # 查找已有板块累计记录
         existing = self._money_flow_agg_repo.find_longest_accumulation(
-            sector.code, MoneyFlowAggregation.TYPE_SECTOR,
+            sector.code, AggregationType.SECTOR,
         )
 
         if existing:
@@ -359,7 +359,7 @@ class MoneyFlowAggregator:
 
         # 读取成分股的资金总量数据
         existing_accumulations = self._money_flow_agg_repo.find_accumulations_by_code(
-            member, MoneyFlowAggregation.TYPE_STOCK, since
+            member, AggregationType.STOCK, since
         )
 
         # 每一天的资金总量，key为资金总量的截止日期
@@ -381,7 +381,7 @@ class MoneyFlowAggregator:
         """
         
         existing = self._money_flow_agg_repo.find_latest_by_trading_days(
-            sector.code, MoneyFlowAggregation.TYPE_SECTOR, window
+            sector.code, AggregationType.SECTOR, window
         )
 
         if existing:
@@ -426,7 +426,7 @@ class MoneyFlowAggregator:
                 key 为 start_date，value 为对应日期的滑动窗口聚合对象
         """
         existing_sliding = self._money_flow_agg_repo.find_by_trading_days(
-            member, MoneyFlowAggregation.TYPE_STOCK, window, since
+            member, AggregationType.STOCK, window, since
         )
 
         member_sliding: Dict[date, MoneyFlowAggregation] = {}

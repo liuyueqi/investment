@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import List, Optional
 
-from domain.money_flow_aggregation import MoneyFlowAggregation
+from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
 from infra.database.connection import get_db
 from typing_extensions import deprecated
 from infra.log import logger
@@ -88,7 +88,7 @@ class MoneyFlowAggregationRepository:
 
             Args:
                 code (str):       股票代码或板块代码
-                type (str):       实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                type (str):       实体类型，AggregationType.STOCK / AggregationType.SECTOR
                 start_date (date): 统计起始日期
                 end_date (date):   统计结束日期
 
@@ -118,7 +118,7 @@ class MoneyFlowAggregationRepository:
 
             Args:
                 code (str):  股票代码或板块代码
-                type (str):  实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                type (str):  实体类型，AggregationType.STOCK / AggregationType.SECTOR
 
             Returns:
                 trading_days 最大的累计记录，若无累计记录则返回 None
@@ -148,7 +148,7 @@ class MoneyFlowAggregationRepository:
 
             Args:
                 code (str):        股票代码或板块代码
-                type (str):        实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                type (str):        实体类型，AggregationType.STOCK / AggregationType.SECTOR
                 since (date):      起始日期（含）。
                                    例如 since=2026-07-01，则返回 end_date >= 2026-07-01 的累计记录。
 
@@ -185,7 +185,7 @@ class MoneyFlowAggregationRepository:
 
             Args:
                 code (str):         股票代码或板块代码
-                type (str):         实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                type (str):         实体类型，AggregationType.STOCK / AggregationType.SECTOR
                 trading_days (int): 窗口天数，如 3、5、10、20
 
             Returns:
@@ -217,7 +217,7 @@ class MoneyFlowAggregationRepository:
 
             Args:
                 code (str):         股票代码或板块代码
-                type (str):         实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                type (str):         实体类型，AggregationType.STOCK / AggregationType.SECTOR
                 trading_days (int): 窗口天数，如 3、5、10、20
                 since (date):       起始日期（含）。若为 None 则查询全部。
 
