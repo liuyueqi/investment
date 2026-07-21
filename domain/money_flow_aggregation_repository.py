@@ -13,7 +13,14 @@ class MoneyFlowAggregationRepository:
     """资金流聚合数据仓库"""
 
     def save(self, agg: MoneyFlowAggregation) -> None:
-        """保存一条聚合记录（UPSERT，幂等安全）"""
+        """
+            保存一条聚合记录（UPSERT，幂等安全）。
+            若相同 (code, type, start_date, end_date) 的记录已存在，则先删除再插入，
+            实现幂等更新。
+
+            Args:
+                agg (MoneyFlowAggregation): 要保存的聚合数据对象
+        """
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
 
@@ -32,7 +39,7 @@ class MoneyFlowAggregationRepository:
 
             conn.execute(
                 """INSERT INTO money_flow_aggregation (
-                       code, type, start_date, end_date, trading_days, is_acaccumulative,
+                       code, type, start_date, end_date, trading_days, is_accumulative,
                        main_net, main_cnt, net_amount,
                        huge_net, huge_buy_net, huge_sell_net,
                        huge_cnt, huge_buy_cnt, huge_sell_cnt,
@@ -77,7 +84,16 @@ class MoneyFlowAggregationRepository:
             self, code: str, type: str, start_date: date, end_date: date
     ) -> Optional[MoneyFlowAggregation]:
         """
-            根据统计数据的日期范围查询指定标的的资金流聚合数据
+            根据统计数据的日期范围精确查询指定标的的聚合记录。
+
+            Args:
+                code (str):       股票代码或板块代码
+                type (str):       实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                start_date (date): 统计起始日期
+                end_date (date):   统计结束日期
+
+            Returns:
+                匹配的 MoneyFlowAggregation 对象，若不存在则返回 None
         """
         
         with get_db() as conn:
@@ -92,13 +108,20 @@ class MoneyFlowAggregationRepository:
             return self._row_to_agg(row) if row else None
         
     def find_longest_accumulation(
-            self, 
-            code: 
-            str, 
-            type: str
+            self,
+            code: str,
+            type: str,
     ) -> Optional[MoneyFlowAggregation]:
         """
-            查询最长累计资金总量记录（trading_days 最大）
+            查询指定标的中 trading_days 最大的累计资金总量记录。
+            用于增量续算：从该记录的 end_date 次日开始追加计算即可。
+
+            Args:
+                code (str):  股票代码或板块代码
+                type (str):  实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+
+            Returns:
+                trading_days 最大的累计记录，若无累计记录则返回 None
         """
 
         with get_db() as conn:
@@ -106,71 +129,31 @@ class MoneyFlowAggregationRepository:
                 """SELECT * FROM money_flow_aggregation
                    WHERE code = ?
                      AND type = ?
-                     AND is_acaccumulative = 1
+                     AND is_accumulative = 1
                    ORDER BY trading_days DESC
                    LIMIT 1""",
                 (code, type),
             ).fetchone()
             return self._row_to_agg(row) if row else None
 
-    def find_since_date(
-        self, code: str, type: str, start_date: date, end_date: Optional[date] = None
-    ) -> List[MoneyFlowAggregation]:
-        """
-            查询从指定日期开始的资金流聚合数据
-        """
-
-        sql = """SELECT * FROM money_flow_aggregation
-                   WHERE code = ?
-                     AND type = ?
-                     AND start_date = ?"""
-        params = [code, type, start_date.isoformat()]
-        if end_date:
-            sql += " AND end_date <= ?"
-            params.append(end_date.isoformat())
-        sql += " ORDER BY trading_days"
-
-        with get_db() as conn:
-
-            rows = conn.execute(sql, params).fetchall()
-            aggs = []
-            for row in rows:
-                aggs.append(self._row_to_agg(row))
-            return aggs
-
-    @deprecated("Use find_longest_accumulation instead")
-    def find_longest_since_date(self, code: str, type: str, start_date: date) -> Optional[MoneyFlowAggregation]:
-        """查询指定起始日期的最长累计聚合记录（trading_days 最大）"""
-        with get_db() as conn:
-            row = conn.execute(
-                """SELECT * FROM money_flow_aggregation
-                   WHERE code = ?
-                     AND type = ?
-                     AND start_date = ?
-                   ORDER BY trading_days DESC
-                   LIMIT 1""",
-                (code, type, start_date.isoformat()),
-            ).fetchone()
-            return self._row_to_agg(row) if row else None
-        
     def find_accumulations_by_code(
-            self, 
-            code: str, 
-            type: str, 
-            since: Optional[date]
+            self,
+            code: str,
+            type: str,
+            since: Optional[date],
     ) -> List[MoneyFlowAggregation]:
         """
-            查询从指定日期开始的资金总量
+            查询指定标的从 since 日期开始的资金总量记录。
+            用于板块聚合时获取成分股的累计数据。
 
             Args:
-                code (str):         股票/板块代码
-                type (str):         类型。stock：股票，sector：板块
-                since (date):       指定日期。
-                                    例如：since=2026-07-01，则获取该股票/板块从有资金流记录开始到2026-07-01的资金总量、
-                                         到07-02（以及07-03、07-04）的资金总量，直到今天的资金总量
+                code (str):        股票代码或板块代码
+                type (str):        实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                since (date):      起始日期（含）。
+                                   例如 since=2026-07-01，则返回 end_date >= 2026-07-01 的累计记录。
 
             Returns:
-                从since参数开始，到今天为止，每一天的资金总量
+                符合条件的累计聚合记录列表（按 trading_days 升序）
         """
 
         sql = """SELECT * FROM money_flow_aggregation
@@ -182,9 +165,8 @@ class MoneyFlowAggregationRepository:
             sql = sql + """ AND end_date >= ? """
             params.append(since)
 
-        sql = sql + """ AND is_acaccumulative = 1
-                   ORDER BY trading_days
-                   LIMIT 1"""
+        sql = sql + """ AND is_accumulative = 1
+                   ORDER BY trading_days"""
 
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
@@ -198,7 +180,16 @@ class MoneyFlowAggregationRepository:
             self, code: str, type: str, trading_days: int
     ) -> Optional[MoneyFlowAggregation]:
         """
-            查询指定 trading_days 的最新一条聚合记录
+            查询指定标的和窗口天数的最新一条滑动窗口聚合记录。
+            用于增量续算：从该记录的 start_date 次日开始追加计算即可。
+
+            Args:
+                code (str):         股票代码或板块代码
+                type (str):         实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                trading_days (int): 窗口天数，如 3、5、10、20
+
+            Returns:
+                start_date 最新的滑动窗口记录，若不存在则返回 None
         """
         
         with get_db() as conn:
@@ -214,13 +205,24 @@ class MoneyFlowAggregationRepository:
             return self._row_to_agg(row) if row else None
         
     def find_by_trading_days(
-            self, 
-            code: str, 
-            type: str, 
+            self,
+            code: str,
+            type: str,
             trading_days: int,
-            since: Optional[date]
+            since: Optional[date],
     ) -> List[MoneyFlowAggregation]:
         """
+            查询指定标的和窗口天数的滑动窗口聚合记录。
+            用于板块聚合时获取成分股的滑动窗口数据。
+
+            Args:
+                code (str):         股票代码或板块代码
+                type (str):         实体类型，MoneyFlowAggregation.TYPE_STOCK 或 TYPE_SECTOR
+                trading_days (int): 窗口天数，如 3、5、10、20
+                since (date):       起始日期（含）。若为 None 则查询全部。
+
+            Returns:
+                符合条件的滑动窗口聚合记录列表（按 start_date 升序）
         """
 
         sql = """SELECT * FROM money_flow_aggregation
@@ -243,6 +245,15 @@ class MoneyFlowAggregationRepository:
             return aggs
 
     def _row_to_agg(self, row: Optional[dict]) -> Optional[MoneyFlowAggregation]:
+        """
+            将数据库行记录转换为 MoneyFlowAggregation 实体。
+
+            Args:
+                row (dict): 数据库查询结果行
+
+            Returns:
+                MoneyFlowAggregation 对象，若 row 为 None 则返回 None
+        """
         if row is None:
             return None
 
@@ -255,7 +266,7 @@ class MoneyFlowAggregationRepository:
             start_date=_opt_date(row["start_date"]),
             end_date=_opt_date(row["end_date"]),
             trading_days=row["trading_days"] or 1,
-            accumulative=bool(row["is_acaccumulative"]),
+            accumulative=bool(row["is_accumulative"]),
             main_net=row["main_net"] or 0.0,
             main_cnt=row["main_cnt"] or 0,
             net_amount=row["net_amount"] or 0.0,

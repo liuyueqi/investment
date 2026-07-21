@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS money_flow_aggregation (
     start_date                      TEXT NOT NULL,      -- 统计期的起始日期
     end_date                        TEXT NOT NULL,      -- 统计期的结束日期
     trading_days                    INTEGER DEFAULT 1,
-    is_acaccumulative               INTEGER NOT NULL,   -- 是否为资金流累计总和
+    is_accumulative               INTEGER NOT NULL,   -- 是否为资金流累计总和
 
     -- 累计主要指标
     main_net             REAL DEFAULT 0.0,
@@ -171,7 +171,6 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_code ON daily_quotes(code);",
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_date ON daily_quotes(trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_sector_members_stock ON sector_members(stock_code);",
-    "CREATE INDEX IF NOT EXISTS idx_mf_agg_days ON money_flow_aggregation(end_date, trading_days, type);",
 ]
 
 
