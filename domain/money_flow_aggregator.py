@@ -173,8 +173,7 @@ class MoneyFlowAggregator:
             new_aggs.append(new_agg)
 
         # 批量保存
-        for agg in new_aggs:
-            self._money_flow_agg_repo.save(agg)
+        self._money_flow_agg_repo.save(*new_aggs)
         logger.info(f"保存了 {len(new_aggs)} 条股票 {stock} 的资金总量数据")
 
     def _aggregate_stock_sliding(self, stock: Stock) -> None:
@@ -241,8 +240,7 @@ class MoneyFlowAggregator:
             new_aggs.append(agg)
 
         # 批量保存
-        for agg in new_aggs:
-            self._money_flow_agg_repo.save(agg)
+        self._money_flow_agg_repo.save(*new_aggs)
         logger.info(f"保存了 {len(new_aggs)} 条股票 {stock} 的 {window}天 净流入数据")
 
     # ════════════════════════════════════════════════════════════
@@ -339,8 +337,7 @@ class MoneyFlowAggregator:
                         sector.code, sector.name, accu
                     )
 
-        for accu in sector_accumulation.values():
-            self._money_flow_agg_repo.save(accu)
+        self._money_flow_agg_repo.save(*sector_accumulation.values())
         logger.info(f"保存了 {len(sector_accumulation)} 条板块 {sector} 的资金总量数据")
             
     def _aggregate_member_accumulation(
@@ -407,8 +404,7 @@ class MoneyFlowAggregator:
                         sector.code, sector.name, sliding
                     )
 
-        for sliding in sector_sliding.values():
-            self._money_flow_agg_repo.save(sliding)
+        self._money_flow_agg_repo.save(*sector_sliding.values())
         logger.info(f"保存了 {len(sector_sliding)} 条板块 {sector} 的 {window}天 净流入数据")
 
     def _aggregate_member_sliding(

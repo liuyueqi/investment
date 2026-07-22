@@ -5,40 +5,13 @@ from typing import List, Optional
 
 from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
 from infra.database.connection import get_db
-from typing_extensions import deprecated
 from infra.log import logger
 
 
 class MoneyFlowAggregationRepository:
     """资金流聚合数据仓库"""
 
-    def save(self, agg: MoneyFlowAggregation) -> None:
-        """
-            保存一条聚合记录（UPSERT，幂等安全）。
-            若相同 (code, type, start_date, end_date) 的记录已存在，则先删除再插入，
-            实现幂等更新。
-
-            Args:
-                agg (MoneyFlowAggregation): 要保存的聚合数据对象
-        """
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with get_db() as conn:
-
-            existing = conn.execute(
-                """SELECT 1 FROM money_flow_aggregation
-                   WHERE code = ? AND type = ? AND start_date = ? AND end_date = ?""",
-                (agg.code, agg.type, agg.start_date, agg.end_date),
-            ).fetchone()
-
-            if existing:
-                conn.execute(
-                    """DELETE FROM money_flow_aggregation
-                       WHERE code = ? AND type = ? AND start_date = ? AND end_date = ?""",
-                    (agg.code, agg.type, agg.start_date, agg.end_date),
-                )
-
-            conn.execute(
-                """INSERT INTO money_flow_aggregation (
+    _UPSERT_SQL = """INSERT OR REPLACE INTO money_flow_aggregation (
                        code, type, start_date, end_date, trading_days, is_accumulative,
                        main_net, main_cnt, net_amount,
                        huge_net, huge_buy_net, huge_sell_net,
@@ -60,25 +33,47 @@ class MoneyFlowAggregationRepository:
                              ?, ?, ?,
                              ?, ?, ?,
                              ?, ?, ?,
-                             ?, ?)""",
-                (
-                    agg.code, agg.type,
-                    agg.start_date.isoformat(),
-                    agg.end_date.isoformat(),
-                    agg.trading_days,
-                    int(agg.accumulative),
-                    agg.main_net, agg.main_cnt, agg.net_amount,
-                    agg.huge_net, agg.huge_buy_net, agg.huge_sell_net,
-                    agg.huge_cnt, agg.huge_buy_cnt, agg.huge_sell_cnt,
-                    agg.large_net, agg.large_buy_net, agg.large_sell_net,
-                    agg.large_cnt, agg.large_buy_cnt, agg.large_sell_cnt,
-                    agg.medium_net, agg.medium_buy_net, agg.medium_sell_net,
-                    agg.medium_cnt, agg.medium_buy_cnt, agg.medium_sell_cnt,
-                    agg.small_net, agg.small_buy_net, agg.small_sell_net,
-                    agg.small_cnt, agg.small_buy_cnt, agg.small_sell_cnt,
-                    now, now,
-                ),
-            )
+                             ?, ?)"""
+
+    def save(self, *aggs: MoneyFlowAggregation) -> None:
+        """
+            保存一条或多条聚合记录（UPSERT，幂等安全）。
+            利用 INSERT OR REPLACE + executemany 实现，若主键冲突则覆盖整行。
+            传入单个对象或批量传入多个对象均可。
+
+            Args:
+                *aggs: 一个或多个 MoneyFlowAggregation 对象
+        """
+        if not aggs:
+            return
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        params = [self._upsert_params(agg, now) for agg in aggs]
+        with get_db() as conn:
+            conn.executemany(self._UPSERT_SQL, params)
+
+    # ── 参数辅助 ──────────────────────────────────────────────
+
+    def _upsert_params(self, agg: MoneyFlowAggregation, now: str) -> tuple:
+        return (
+            agg.code, agg.type,
+            agg.start_date.isoformat(),
+            agg.end_date.isoformat(),
+            agg.trading_days,
+            int(agg.accumulative),
+            agg.main_net, agg.main_cnt, agg.net_amount,
+            agg.huge_net, agg.huge_buy_net, agg.huge_sell_net,
+            agg.huge_cnt, agg.huge_buy_cnt, agg.huge_sell_cnt,
+            agg.large_net, agg.large_buy_net, agg.large_sell_net,
+            agg.large_cnt, agg.large_buy_cnt, agg.large_sell_cnt,
+            agg.medium_net, agg.medium_buy_net, agg.medium_sell_net,
+            agg.medium_cnt, agg.medium_buy_cnt, agg.medium_sell_cnt,
+            agg.small_net, agg.small_buy_net, agg.small_sell_net,
+            agg.small_cnt, agg.small_buy_cnt, agg.small_sell_cnt,
+            now, now,
+        )
+
+    # ── 查询方法 ──────────────────────────────────────────────
 
     def find_by_date_range(
             self, code: str, type: str, start_date: date, end_date: date
@@ -150,7 +145,6 @@ class MoneyFlowAggregationRepository:
                 code (str):        股票代码或板块代码
                 type (str):        实体类型，AggregationType.STOCK / AggregationType.SECTOR
                 since (date):      起始日期（含）。
-                                   例如 since=2026-07-01，则返回 end_date >= 2026-07-01 的累计记录。
 
             Returns:
                 符合条件的累计聚合记录列表（按 trading_days 升序）
@@ -170,11 +164,7 @@ class MoneyFlowAggregationRepository:
 
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
-            
-            aggs = []
-            for row in rows:
-                aggs.append(self._row_to_agg(row))
-            return aggs
+            return self._rows_to_aggs(rows)
 
     def find_latest_by_trading_days(
             self, code: str, type: str, trading_days: int
@@ -238,11 +228,16 @@ class MoneyFlowAggregationRepository:
 
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
+            return self._rows_to_aggs(rows)
 
-            aggs = []
-            for row in rows:
-                aggs.append(self._row_to_agg(row))
-            return aggs
+    def _rows_to_aggs(self, rows) -> List[MoneyFlowAggregation]:
+        """将多行数据库记录转换为 MoneyFlowAggregation 列表"""
+        result: List[MoneyFlowAggregation] = []
+        for row in rows:
+            agg = self._row_to_agg(row)
+            if agg is not None:
+                result.append(agg)
+        return result
 
     def _row_to_agg(self, row: Optional[dict]) -> Optional[MoneyFlowAggregation]:
         """
