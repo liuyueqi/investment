@@ -97,9 +97,9 @@ class MoneyFlowAggregator:
                 stock = futures[future]
                 try:
                     future.result()
-                    logger.info(f"股票 {stock} 聚合完成")
+                    logger.info(f"{i}: 股票 {stock} 聚合完成")
                 except Exception as e:
-                    logger.error(f"股票 {stock} 聚合失败: {e}")
+                    logger.error(f"{1}: 股票 {stock} 聚合失败: {e}")
                 if i % 50 == 0 or i == total:
                     logger.info(f"个股聚合进度: {i}/{total}")
 
@@ -268,9 +268,9 @@ class MoneyFlowAggregator:
                 sector = futures[future]
                 try:
                     future.result()
-                    logger.info(f"板块 {sector} 聚合完成")
+                    logger.info(f"{i}: 板块 {sector} 聚合完成")
                 except Exception as e:
-                    logger.error(f"板块 {sector} 聚合失败: {e}")
+                    logger.error(f"{i}: 板块 {sector} 聚合失败: {e}")
                 if i % 20 == 0 or i == total:
                     logger.info(f"板块聚合进度: {i}/{total}")
 

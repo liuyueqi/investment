@@ -185,6 +185,7 @@ def init_db() -> None:
     """初始化数据库：创建所有表（幂等，多次运行安全）"""
     conn = get_connection()
     try:
+        conn.execute("PRAGMA page_size=8192")
         conn.execute(CREATE_STOCKS_TABLE)
         conn.execute(CREATE_SECTORS_TABLE)
         conn.execute(CREATE_SECTOR_MEMBERS_TABLE)

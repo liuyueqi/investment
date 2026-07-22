@@ -96,10 +96,10 @@ class SectorRepository:
         logger.info(f"线程 {threading.current_thread().name} 开始处理 {len(chunk)} 只股票")
         local_map: Dict[str, Sector] = {}
         for stock_code in chunk:
-            boards = self._adapter.get_stock_sectors(stock_code)
-            for board in boards:
-                code = board['code']
-                name = board['name']
+            sectors = self._adapter.get_stock_sectors(stock_code)
+            for sector in sectors:
+                code = sector['code']
+                name = sector['name']
                 if code not in local_map:
                     local_map[code] = Sector(
                         code=code,

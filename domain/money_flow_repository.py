@@ -28,6 +28,7 @@ class MoneyFlowRepository:
         """
         self._stock_adapter = stock_adapter
         self._flow_adapter = flow_adapter
+        self._find_by_code_cache: Dict[str, List[MoneyFlow]] = {}
 
     def refresh(self, stock_codes: Optional[List[str]] = None,
                 force: bool = True) -> None:
@@ -192,8 +193,21 @@ class MoneyFlowRepository:
                     ),
                 )
 
-    def find_by_code(self, code: str) -> List[MoneyFlow]:
-        """根据股票代码查询所有资金流向记录"""
+    def find_by_code(self, code: str, force: bool = False) -> List[MoneyFlow]:
+        """
+            根据股票代码查询所有资金流向记录。
+            结果会缓存在内存中，优先从缓存读取。
+
+            Args:
+                code (str):  股票代码
+                force (bool): 是否强制从数据库读取并更新缓存
+
+            Returns:
+                资金流向记录列表
+        """
+        if not force and code in self._find_by_code_cache:
+            return self._find_by_code_cache[code]
+
         with get_db() as conn:
             rows = conn.execute(
                 """SELECT code, trade_date, period,
@@ -215,35 +229,31 @@ class MoneyFlowRepository:
                    ORDER BY trade_date""",
                 (code,),
             ).fetchall()
-            return [self._row_to_money_flow(row) for row in rows]
+            result = [self._row_to_money_flow(row) for row in rows]
+            self._find_by_code_cache[code] = result
+            return result
 
     def find_by_code_and_date_range(
-        self, code: str, start_date: date, end_date: date
+        self, code: str, start_date: date, end_date: date, force: bool = False
     ) -> List[MoneyFlow]:
-        """按股票代码和日期范围查询资金流向记录"""
-        with get_db() as conn:
-            rows = conn.execute(
-                """SELECT code, trade_date, period,
-                          main_cnt, main_net, net_amount,
-                          huge_buy_cnt, huge_buy_net,
-                          huge_sell_cnt, huge_sell_net,
-                          huge_cnt, huge_net,
-                          large_buy_cnt, large_buy_net,
-                          large_sell_cnt, large_sell_net,
-                          large_cnt, large_net,
-                          medium_buy_cnt, medium_buy_net,
-                          medium_sell_cnt, medium_sell_net,
-                          medium_cnt, medium_net,
-                          small_buy_cnt, small_buy_net,
-                          small_sell_cnt, small_sell_net,
-                          small_cnt, small_net
-                   FROM money_flows
-                   WHERE code = ? AND period = 'day' AND is_deleted = 0
-                     AND trade_date >= ? AND trade_date <= ?
-                   ORDER BY trade_date""",
-                (code, start_date.isoformat(), end_date.isoformat()),
-            ).fetchall()
-            return [self._row_to_money_flow(row) for row in rows]
+        """
+            按股票代码和日期范围查询资金流向记录。
+            优先走 find_by_code 的缓存，在内存中过滤日期范围。
+
+            Args:
+                code (str):       股票代码
+                start_date (date): 起始日期（含）
+                end_date (date):   结束日期（含）
+                force (bool):     是否强制从数据库读取并更新缓存
+
+            Returns:
+                符合条件的资金流向记录列表
+        """
+        all_flows = self.find_by_code(code, force=force)
+        return [
+            f for f in all_flows
+            if f.time.date() >= start_date and f.time.date() <= end_date
+        ]
         
     _BATCH_SIZE = 500
 

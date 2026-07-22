@@ -29,12 +29,12 @@ class Console:
                 if cmd in ("quit", "exit"):
                     print("再见！")
                     break
-                elif cmd == "help":
+                elif cmd in ("help"):
                     self._show_help()
-                elif cmd == "download":
+                elif cmd in ("download", "sync") :
                     self._downloader.download_all()
                     print("\n✅ download 完成")
-                elif cmd == "aggregate":
+                elif cmd in ("aggregate", "aggr"):
                     self._aggregator.aggregate_all()
                     print("\n✅ aggregate 完成")
                 else:

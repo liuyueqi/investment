@@ -43,7 +43,7 @@ class AppContainer(containers.DeclarativeContainer):
     # ── 聚合器（单例，自动注入 Repository） ──────────────────
     money_flow_aggregator = providers.Singleton(
         MoneyFlowAggregator,
-        stock_reop=stock_repo,
+        stock_repo=stock_repo,
         sector_repo=sector_repo,
         money_flow_repo=money_flow_repo,
         agg_repo=money_flow_aggregation_repo,

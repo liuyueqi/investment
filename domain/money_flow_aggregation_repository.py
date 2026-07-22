@@ -1,7 +1,7 @@
 """资金流聚合数据仓库，管理 money_flow_aggregation 表"""
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Dict, Optional
 
 from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
 from infra.database.connection import get_db
@@ -10,6 +10,9 @@ from infra.log import logger
 
 class MoneyFlowAggregationRepository:
     """资金流聚合数据仓库"""
+
+    def __init__(self):
+        self._accumulation_cache: Dict[str, List[MoneyFlowAggregation]] = {}
 
     _UPSERT_SQL = """INSERT OR REPLACE INTO money_flow_aggregation (
                        code, type, start_date, end_date, trading_days, is_accumulative,
@@ -46,6 +49,9 @@ class MoneyFlowAggregationRepository:
         """
         if not aggs:
             return
+
+        # 清除缓存
+        self._accumulation_cache.clear()
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         params = [self._upsert_params(agg, now) for agg in aggs]
@@ -136,19 +142,31 @@ class MoneyFlowAggregationRepository:
             code: str,
             type: str,
             since: Optional[date],
+            force: bool = False,
     ) -> List[MoneyFlowAggregation]:
         """
             查询指定标的从 since 日期开始的资金总量记录。
             用于板块聚合时获取成分股的累计数据。
+            结果会缓存在内存中，优先从缓存读取。
 
             Args:
                 code (str):        股票代码或板块代码
                 type (str):        实体类型，AggregationType.STOCK / AggregationType.SECTOR
                 since (date):      起始日期（含）。
+                force (bool):      是否强制从数据库读取并更新缓存。
 
             Returns:
                 符合条件的累计聚合记录列表（按 trading_days 升序）
         """
+
+        # 构建缓存 key
+        cache_key = f"{type}:{code}"
+    
+        if not force and cache_key in self._accumulation_cache:
+            cached = self._accumulation_cache[cache_key]
+            if since is None:
+                return cached
+            return [c for c in cached if c.end_date >= since]
 
         sql = """SELECT * FROM money_flow_aggregation
                    WHERE code = ?
@@ -164,7 +182,10 @@ class MoneyFlowAggregationRepository:
 
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
-            return self._rows_to_aggs(rows)
+            result = self._rows_to_aggs(rows)
+            # 缓存（全量缓存，忽略 since）
+            self._accumulation_cache[cache_key] = result
+            return result
 
     def find_latest_by_trading_days(
             self, code: str, type: str, trading_days: int
