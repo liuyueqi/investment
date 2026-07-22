@@ -26,9 +26,6 @@ class AggregationType(str, Enum):
 
 @dataclass
 class MoneyFlowAggregation:
-    
-    TYPE_STOCK = AggregationType.STOCK
-    TYPE_SECTOR = AggregationType.SECTOR
 
     """资金流聚合数据（与原始 money_flows 数据分离）"""
 

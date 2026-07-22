@@ -32,12 +32,12 @@ class MoneyFlowAggregator:
 
     def __init__(
         self,
-        stock_reop: StockRepository,
+        stock_repo: StockRepository,
         sector_repo: SectorRepository,
         money_flow_repo: MoneyFlowRepository,
         agg_repo: MoneyFlowAggregationRepository,
     ):
-        self._stock_repo = stock_reop
+        self._stock_repo = stock_repo
         self._money_flow_repo = money_flow_repo
         self._sector_repo = sector_repo
         self._money_flow_agg_repo = agg_repo

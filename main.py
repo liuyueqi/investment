@@ -1,7 +1,6 @@
-"""主程序入口：从 IoC 容器获取 Downloader 并执行数据下载"""
+"""主程序入口：启动交互式控制台"""
 
-from downloader import Downloader
+from console import Console
 
 if __name__ == "__main__":
-    downloader = Downloader()
-    downloader.download_all()
+    Console().run()
