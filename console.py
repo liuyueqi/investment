@@ -33,9 +33,11 @@ class Console:
                     self._show_help()
                 elif cmd in ("download", "sync") :
                     self._downloader.download_all()
+                    self._aggregator.aggregate(None)
                     print("\n✅ download 完成")
                 elif cmd in ("aggregate", "aggr"):
-                    self._aggregator.aggregate_all()
+                    scope = parts[1] if len(parts) > 1 else None
+                    self._aggregator.aggregate(scope)
                     print("\n✅ aggregate 完成")
                 else:
                     print(f"未知命令: {cmd}。输入 help 查看可用命令。")
@@ -48,18 +50,18 @@ class Console:
 
     # ── 帮助 / 横幅 ───────────────────────────────────────────
 
-    @staticmethod
-    def _print_banner() -> None:
+    def _print_banner(self) -> None:
         print("=" * 60)
         print("  投资数据系统控制台")
         print("=" * 60)
-        Console._show_help()
+        self._show_help()
 
-    @staticmethod
-    def _show_help() -> None:
+    def _show_help(self) -> None:
         print("可用命令:")
-        print("  help                          - 显示帮助信息")
-        print("  download                      - 下载股票 + 板块 + 资金流向 + 聚合")
-        print("  aggregate                     - 仅执行数据聚合")
-        print("  quit / exit                   - 退出控制台")
+        print("  help                               - 显示帮助信息")
+        print("  download / sync                    - 下载股票 + 板块 + 资金流向 + 聚合")
+        print("  aggregate / aggr                   - 仅执行数据聚合")
+        print("    aggregate stock / aggr stock     - 仅执行股票数据聚合")
+        print("    aggregate sector / aggr sector   - 仅执行板块数据聚合")
+        print("  quit / exit                        - 退出控制台")
         print("-" * 60)

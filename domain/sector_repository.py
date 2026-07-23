@@ -14,12 +14,12 @@ class SectorRepository:
     """板块数据仓库，管理 sectors 表和 sector_members 表"""
 
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
-    _CHUNK_SIZE = 50   # 每个线程处理的股票数量
-    _MAX_WORKERS = 48   # 最大并发线程数
+    _CHUNK_SIZE = 100   # 每个线程处理的股票数量
 
-    def __init__(self, adapter: StockDataAdapter):
+    def __init__(self, adapter: StockDataAdapter, build_pool: ThreadPoolExecutor):
         self._adapter = adapter
         self._lock = threading.Lock()
+        self._build_pool = build_pool
 
     def refresh(self, stock_codes: Optional[List[str]] = None, force: bool = False) -> None:
         """同步外部数据到数据库
@@ -67,26 +67,23 @@ class SectorRepository:
         # 并发加载：将股票代码分块，每个线程处理一块
         sectors: Dict[str, Sector] = {}
         chunks = [stock_codes[i:i + self._CHUNK_SIZE] for i in range(0, total, self._CHUNK_SIZE)]
-        max_workers = min(self._MAX_WORKERS, len(chunks))
 
-        logger.info(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块，"
-              f"使用 {max_workers} 个线程并发加载")
-        with ThreadPoolExecutor(max_workers=max_workers) as exc:
-            futures = {exc.submit(self._process_chunk, chunk): chunk for chunk in chunks}
-            for fut in as_completed(futures):
-                try:
-                    local_map = fut.result()
-                except Exception as e:
-                    logger.error(f"线程处理异常: {e}")
-                    continue
+        logger.info(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块")
+        futures = {self._build_pool.submit(self._process_chunk, chunk): chunk for chunk in chunks}
+        for fut in as_completed(futures):
+            try:
+                local_map = fut.result()
+            except Exception as e:
+                logger.error(f"线程处理异常: {e}")
+                continue
 
-                with self._lock:
-                    for code, sector in local_map.items():
-                        if code not in sectors:
-                            sectors[code] = sector
-                        else:
-                            for c in sector.members:
-                                sectors[code].add_member(c)
+            with self._lock:
+                for code, sector in local_map.items():
+                    if code not in sectors:
+                        sectors[code] = sector
+                    else:
+                        for c in sector.members:
+                            sectors[code].add_member(c)
 
         self._save_to_db(sectors)
         logger.info(f"构建完成，共 {len(sectors)} 个板块，已保存到数据库")

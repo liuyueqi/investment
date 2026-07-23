@@ -13,6 +13,7 @@ class MoneyFlowAggregationRepository:
 
     def __init__(self):
         self._accumulation_cache: Dict[str, List[MoneyFlowAggregation]] = {}
+        self._sliding_cache: Dict[str, List[MoneyFlowAggregation]] = {}
 
     _UPSERT_SQL = """INSERT OR REPLACE INTO money_flow_aggregation (
                        code, type, start_date, end_date, trading_days, is_accumulative,
@@ -52,6 +53,7 @@ class MoneyFlowAggregationRepository:
 
         # 清除缓存
         self._accumulation_cache.clear()
+        self._sliding_cache.clear()
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         params = [self._upsert_params(agg, now) for agg in aggs]
@@ -221,20 +223,32 @@ class MoneyFlowAggregationRepository:
             type: str,
             trading_days: int,
             since: Optional[date],
+            force: bool = False,
     ) -> List[MoneyFlowAggregation]:
         """
             查询指定标的和窗口天数的滑动窗口聚合记录。
             用于板块聚合时获取成分股的滑动窗口数据。
+            结果会缓存在内存中，优先从缓存读取。
 
             Args:
                 code (str):         股票代码或板块代码
                 type (str):         实体类型，AggregationType.STOCK / AggregationType.SECTOR
                 trading_days (int): 窗口天数，如 3、5、10、20
                 since (date):       起始日期（含）。若为 None 则查询全部。
+                force (bool):       是否强制从数据库读取并更新缓存。
 
             Returns:
                 符合条件的滑动窗口聚合记录列表（按 start_date 升序）
         """
+
+        # 构建缓存 key
+        cache_key = f"{type}:{code}:{trading_days}d"
+    
+        if not force and cache_key in self._sliding_cache:
+            cached = self._sliding_cache[cache_key]
+            if since is None:
+                return cached
+            return [c for c in cached if c.start_date >= since]
 
         sql = """SELECT * FROM money_flow_aggregation
                    WHERE code = ?
@@ -249,7 +263,10 @@ class MoneyFlowAggregationRepository:
 
         with get_db() as conn:
             rows = conn.execute(sql, params).fetchall()
-            return self._rows_to_aggs(rows)
+            result = self._rows_to_aggs(rows)
+            # 缓存全量
+            self._sliding_cache[cache_key] = result
+            return result
 
     def _rows_to_aggs(self, rows) -> List[MoneyFlowAggregation]:
         """将多行数据库记录转换为 MoneyFlowAggregation 列表"""

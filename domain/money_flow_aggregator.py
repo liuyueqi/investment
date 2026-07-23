@@ -28,7 +28,6 @@ class MoneyFlowAggregator:
     """
 
     _TRADING_DAYS = [3, 5, 10, 20]  # 需要计算的滑动窗口
-    _MAX_WORKERS = 8                 # 线程池并发数
 
     def __init__(
         self,
@@ -36,17 +35,23 @@ class MoneyFlowAggregator:
         sector_repo: SectorRepository,
         money_flow_repo: MoneyFlowRepository,
         agg_repo: MoneyFlowAggregationRepository,
+        default_pool: ThreadPoolExecutor,
+        sector_aggr_pool: ThreadPoolExecutor,
+        sector_calc_pool: ThreadPoolExecutor,
     ):
         self._stock_repo = stock_repo
         self._money_flow_repo = money_flow_repo
         self._sector_repo = sector_repo
         self._money_flow_agg_repo = agg_repo
+        self._default_pool = default_pool
+        self._sector_aggr_pool = sector_aggr_pool
+        self._sector_calc_pool = sector_calc_pool
 
     # ════════════════════════════════════════════════════════════
     #  公开接口
     # ════════════════════════════════════════════════════════════
 
-    def aggregate_all(self) -> None:
+    def aggregate(self, scope: Optional[List[str]] = None) -> None:
         """
             对所有股票及板块执行聚合计算（入口方法）。
             依次计算：
@@ -56,20 +61,22 @@ class MoneyFlowAggregator:
               4. 所有板块的 N 天净流入
         """
 
-        stocks = self._stock_repo.find_all()
-        if not stocks:
-            logger.warning("没有股票代码可聚合")
-            return
+        if not scope or "stock" in scope:
+            stocks = self._stock_repo.find_all()
+            if not stocks:
+                logger.warning("没有股票代码可聚合")
+                return
 
-        logger.info(f"开始计算 {len(stocks)} 只股票的累计净流入...")
-        self._aggregate_stocks(stocks)
+            logger.info(f"开始计算 {len(stocks)} 只股票的累计净流入...")
+            self._aggregate_stocks(stocks)
 
-        sectors = self._sector_repo.find_all()
-        if not sectors:
-            return
+        if not scope or "sector" in scope:
+            sectors = self._sector_repo.find_all()
+            if not sectors:
+                return
 
-        logger.info("开始计算板块累计净流入...")
-        self._aggregate_sectors(sectors)
+            logger.info("开始计算板块累计净流入...")
+            self._aggregate_sectors(sectors)
 
         logger.info("资金流聚合完成")
 
@@ -88,20 +95,19 @@ class MoneyFlowAggregator:
         """
         
         total = len(stocks)
-        with ThreadPoolExecutor(max_workers=self._MAX_WORKERS) as executor:
-            futures = {
-                executor.submit(self._aggregate_stock, stock): stock
-                for stock in stocks
-            }
-            for i, future in enumerate(as_completed(futures), 1):
-                stock = futures[future]
-                try:
-                    future.result()
-                    logger.info(f"{i}: 股票 {stock} 聚合完成")
-                except Exception as e:
-                    logger.error(f"{1}: 股票 {stock} 聚合失败: {e}")
-                if i % 50 == 0 or i == total:
-                    logger.info(f"个股聚合进度: {i}/{total}")
+        futures = {
+            self._default_pool.submit(self._aggregate_stock, stock): stock
+            for stock in stocks
+        }
+        for i, future in enumerate(as_completed(futures), 1):
+            stock = futures[future]
+            try:
+                future.result()
+                logger.info(f"{i}: 股票 {stock} 聚合完成")
+            except Exception as e:
+                logger.error(f"{i}: 股票 {stock} 聚合失败: {e}")
+            if i % 50 == 0 or i == total:
+                logger.info(f"个股聚合进度: {i}/{total}")
 
     def _aggregate_stock(self, stock: Stock) -> None:
         """
@@ -258,21 +264,20 @@ class MoneyFlowAggregator:
             使用 ThreadPoolExecutor 并发执行，每完成 20 个记录一次进度日志。
         """
     
-        with ThreadPoolExecutor(max_workers=self._MAX_WORKERS) as executor:
-            futures = {
-                executor.submit(self._aggregate_sector, sector): sector
-                for sector in sectors
-            }
-            total = len(futures)
-            for i, future in enumerate(as_completed(futures), 1):
-                sector = futures[future]
-                try:
-                    future.result()
-                    logger.info(f"{i}: 板块 {sector} 聚合完成")
-                except Exception as e:
-                    logger.error(f"{i}: 板块 {sector} 聚合失败: {e}")
-                if i % 20 == 0 or i == total:
-                    logger.info(f"板块聚合进度: {i}/{total}")
+        futures = {
+            self._sector_aggr_pool.submit(self._aggregate_sector, sector): sector
+            for sector in sectors
+        }
+        total = len(futures)
+        for i, future in enumerate(as_completed(futures), 1):
+            sector = futures[future]
+            try:
+                future.result()
+                logger.info(f"{i}: 板块 {sector} 聚合完成")
+            except Exception as e:
+                logger.error(f"{i}: 板块 {sector} 聚合失败: {e}")
+            if i % 20 == 0 or i == total:
+                logger.info(f"板块聚合进度: {i}/{total}")
 
     def _aggregate_sector(self, sector: Sector) -> None:
         """
@@ -290,10 +295,16 @@ class MoneyFlowAggregator:
             logger.warning(f"板块 {sector} 无资金流向数据，跳过")
             return
         
-        self._aggregate_sector_accumulation(sector)
-
+        # 用 calc_pool 并行执行资金总量和 4 种窗口的滑动计算
+        futures = []
+        futures.append(self._sector_calc_pool.submit(self._aggregate_sector_accumulation, sector))
         for window in self._TRADING_DAYS:
-            self._aggregate_sector_sliding(sector, window)
+            futures.append(self._sector_calc_pool.submit(self._aggregate_sector_sliding, sector, window))
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                logger.error(f"板块计算子任务失败: {e}")
 
     def _aggregate_sector_accumulation(self, sector: Sector) -> None:
         """
@@ -324,9 +335,9 @@ class MoneyFlowAggregator:
         else:
             since = None
 
+        # 遍历成员，逐只股票获取资金总量数据并合并
         sector_accumulation: Dict[date, MoneyFlowAggregation] = {}
         for member in sector.members:
-            # 成分股每一天的资金总量
             member_accumulation = self._aggregate_member_accumulation(member, since)
             for accu_date, accu in member_accumulation.items():
                 if accu_date in sector_accumulation:
@@ -391,9 +402,9 @@ class MoneyFlowAggregator:
         else:
             since = None
 
+        # 遍历成员，逐只股票获取滑动窗口数据并合并
         sector_sliding: Dict[date, MoneyFlowAggregation] = {}
         for member in sector.members:
-            # 成分股的N天净流入
             member_sliding = self._aggregate_member_sliding(member, window, since)
             for sliding_date, sliding in member_sliding.items():
                 if sliding_date in sector_sliding:

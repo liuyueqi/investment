@@ -1,5 +1,6 @@
 """IoC 容器 — 基于 dependency-injector"""
 
+from concurrent.futures import ThreadPoolExecutor
 from dependency_injector import containers, providers
 
 from infra.adapters.efinance_adapter import EfinanceAdapter
@@ -19,6 +20,25 @@ class AppContainer(containers.DeclarativeContainer):
     efinance_adapter = providers.Singleton(EfinanceAdapter)
     tushare_adapter = providers.Singleton(TushareAdapter)
 
+    # ── 线程池（单例） ──────────────────────────────────────
+    default_pool = providers.Singleton(
+        ThreadPoolExecutor,
+        max_workers=10,
+        thread_name_prefix="DefaultPool",
+    )
+
+    sector_aggr_pool = providers.Singleton(
+        ThreadPoolExecutor,
+        max_workers=4,
+        thread_name_prefix="SectorAggrPool",
+    )
+
+    sector_calc_pool = providers.Singleton(
+        ThreadPoolExecutor,
+        max_workers=8,
+        thread_name_prefix="SectorCalcPool",
+    )
+
     # ── Repository（单例，自动注入 adapter） ─────────────────
     stock_repo = providers.Singleton(
         StockRepository,
@@ -28,6 +48,7 @@ class AppContainer(containers.DeclarativeContainer):
     sector_repo = providers.Singleton(
         SectorRepository,
         adapter=efinance_adapter,
+        build_pool=default_pool,
     )
 
     money_flow_repo = providers.Singleton(
@@ -47,6 +68,9 @@ class AppContainer(containers.DeclarativeContainer):
         sector_repo=sector_repo,
         money_flow_repo=money_flow_repo,
         agg_repo=money_flow_aggregation_repo,
+        default_pool=default_pool,
+        sector_aggr_pool=sector_aggr_pool,
+        calc_pool=sector_calc_pool,
     )
 
     # ── 下载器（单例，注入依赖） ─────────────────────────────

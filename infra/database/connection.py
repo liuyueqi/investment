@@ -1,7 +1,16 @@
 import sqlite3
+from datetime import date
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator
+
+
+def _adapt_date(val: date) -> str:
+    """将 date 对象转换为 ISO 格式字符串（Python 3.12+ 需要显式注册）"""
+    return val.isoformat()
+
+
+sqlite3.register_adapter(date, _adapt_date)
 
 from context import DATA_DIR
 
