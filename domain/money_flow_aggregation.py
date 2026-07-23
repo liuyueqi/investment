@@ -40,34 +40,25 @@ class MoneyFlowAggregation:
     # ── 累计统计（从 start_date 至 end_date） ────────────
     main_net: float = 0.0          # 累计主力净流入（万元）
     main_cnt: int = 0              # 累计主力笔数
-    net_amount: float = 0.0        # 累计净主动买入额（万元）
 
     # 累计明细
-    huge_net: Optional[float] = None
     huge_buy_net: Optional[float] = None
     huge_sell_net: Optional[float] = None
-    huge_cnt: Optional[int] = None
     huge_buy_cnt: Optional[int] = None
     huge_sell_cnt: Optional[int] = None
 
-    large_net: Optional[float] = None
     large_buy_net: Optional[float] = None
     large_sell_net: Optional[float] = None
-    large_cnt: Optional[int] = None
     large_buy_cnt: Optional[int] = None
     large_sell_cnt: Optional[int] = None
 
-    medium_net: Optional[float] = None
     medium_buy_net: Optional[float] = None
     medium_sell_net: Optional[float] = None
-    medium_cnt: Optional[int] = None
     medium_buy_cnt: Optional[int] = None
     medium_sell_cnt: Optional[int] = None
 
-    small_net: Optional[float] = None
     small_buy_net: Optional[float] = None
     small_sell_net: Optional[float] = None
-    small_cnt: Optional[int] = None
     small_buy_cnt: Optional[int] = None
     small_sell_cnt: Optional[int] = None
 
@@ -91,33 +82,23 @@ class MoneyFlowAggregation:
         # 直接累加所有 flow 的各项值
         total_main_net = sum(f.main_net for f in flows)
         total_main_cnt = sum(f.main_cnt for f in flows)
-        total_net_amount = sum(f.net_amount for f in flows)
-
-        total_huge_net = MoneyFlowAggregation._sum_opt(f.huge_net for f in flows)
         total_huge_buy_net = MoneyFlowAggregation._sum_opt(f.huge_buy_net for f in flows)
         total_huge_sell_net = MoneyFlowAggregation._sum_opt(f.huge_sell_net for f in flows)
-        total_huge_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_cnt for f in flows)
         total_huge_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_buy_cnt for f in flows)
         total_huge_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_sell_cnt for f in flows)
 
-        total_large_net = MoneyFlowAggregation._sum_opt(f.large_net for f in flows)
         total_large_buy_net = MoneyFlowAggregation._sum_opt(f.large_buy_net for f in flows)
         total_large_sell_net = MoneyFlowAggregation._sum_opt(f.large_sell_net for f in flows)
-        total_large_cnt = MoneyFlowAggregation._sum_opt_int(f.large_cnt for f in flows)
         total_large_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.large_buy_cnt for f in flows)
         total_large_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.large_sell_cnt for f in flows)
 
-        total_medium_net = MoneyFlowAggregation._sum_opt(f.medium_net for f in flows)
         total_medium_buy_net = MoneyFlowAggregation._sum_opt(f.medium_buy_net for f in flows)
         total_medium_sell_net = MoneyFlowAggregation._sum_opt(f.medium_sell_net for f in flows)
-        total_medium_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_cnt for f in flows)
         total_medium_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_buy_cnt for f in flows)
         total_medium_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_sell_cnt for f in flows)
 
-        total_small_net = MoneyFlowAggregation._sum_opt(f.small_net for f in flows)
         total_small_buy_net = MoneyFlowAggregation._sum_opt(f.small_buy_net for f in flows)
         total_small_sell_net = MoneyFlowAggregation._sum_opt(f.small_sell_net for f in flows)
-        total_small_cnt = MoneyFlowAggregation._sum_opt_int(f.small_cnt for f in flows)
         total_small_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.small_buy_cnt for f in flows)
         total_small_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.small_sell_cnt for f in flows)
 
@@ -129,29 +110,20 @@ class MoneyFlowAggregation:
             trading_days=len(flows),
             main_net=total_main_net,
             main_cnt=total_main_cnt,
-            net_amount=total_net_amount,
-            huge_net=total_huge_net,
             huge_buy_net=total_huge_buy_net,
             huge_sell_net=total_huge_sell_net,
-            huge_cnt=total_huge_cnt,
             huge_buy_cnt=total_huge_buy_cnt,
             huge_sell_cnt=total_huge_sell_cnt,
-            large_net=total_large_net,
             large_buy_net=total_large_buy_net,
             large_sell_net=total_large_sell_net,
-            large_cnt=total_large_cnt,
             large_buy_cnt=total_large_buy_cnt,
             large_sell_cnt=total_large_sell_cnt,
-            medium_net=total_medium_net,
             medium_buy_net=total_medium_buy_net,
             medium_sell_net=total_medium_sell_net,
-            medium_cnt=total_medium_cnt,
             medium_buy_cnt=total_medium_buy_cnt,
             medium_sell_cnt=total_medium_sell_cnt,
-            small_net=total_small_net,
             small_buy_net=total_small_buy_net,
             small_sell_net=total_small_sell_net,
-            small_cnt=total_small_cnt,
             small_buy_cnt=total_small_buy_cnt,
             small_sell_cnt=total_small_sell_cnt,
             accumulative=accumulative,
@@ -172,29 +144,20 @@ class MoneyFlowAggregation:
             trading_days=sum(m.trading_days for m in members) // len(members),
             main_net=sum(m.main_net for m in members),
             main_cnt=sum(m.main_cnt for m in members),
-            net_amount=sum(m.net_amount for m in members),
-            huge_net=MoneyFlowAggregation._sum_opt(m.huge_net for m in members),
             huge_buy_net=MoneyFlowAggregation._sum_opt(m.huge_buy_net for m in members),
             huge_sell_net=MoneyFlowAggregation._sum_opt(m.huge_sell_net for m in members),
-            huge_cnt=MoneyFlowAggregation._sum_opt_int(m.huge_cnt for m in members),
             huge_buy_cnt=MoneyFlowAggregation._sum_opt_int(m.huge_buy_cnt for m in members),
             huge_sell_cnt=MoneyFlowAggregation._sum_opt_int(m.huge_sell_cnt for m in members),
-            large_net=MoneyFlowAggregation._sum_opt(m.large_net for m in members),
             large_buy_net=MoneyFlowAggregation._sum_opt(m.large_buy_net for m in members),
             large_sell_net=MoneyFlowAggregation._sum_opt(m.large_sell_net for m in members),
-            large_cnt=MoneyFlowAggregation._sum_opt_int(m.large_cnt for m in members),
             large_buy_cnt=MoneyFlowAggregation._sum_opt_int(m.large_buy_cnt for m in members),
             large_sell_cnt=MoneyFlowAggregation._sum_opt_int(m.large_sell_cnt for m in members),
-            medium_net=MoneyFlowAggregation._sum_opt(m.medium_net for m in members),
             medium_buy_net=MoneyFlowAggregation._sum_opt(m.medium_buy_net for m in members),
             medium_sell_net=MoneyFlowAggregation._sum_opt(m.medium_sell_net for m in members),
-            medium_cnt=MoneyFlowAggregation._sum_opt_int(m.medium_cnt for m in members),
             medium_buy_cnt=MoneyFlowAggregation._sum_opt_int(m.medium_buy_cnt for m in members),
             medium_sell_cnt=MoneyFlowAggregation._sum_opt_int(m.medium_sell_cnt for m in members),
-            small_net=MoneyFlowAggregation._sum_opt(m.small_net for m in members),
             small_buy_net=MoneyFlowAggregation._sum_opt(m.small_buy_net for m in members),
             small_sell_net=MoneyFlowAggregation._sum_opt(m.small_sell_net for m in members),
-            small_cnt=MoneyFlowAggregation._sum_opt_int(m.small_cnt for m in members),
             small_buy_cnt=MoneyFlowAggregation._sum_opt_int(m.small_buy_cnt for m in members),
             small_sell_cnt=MoneyFlowAggregation._sum_opt_int(m.small_sell_cnt for m in members),
             accumulative=any(m.accumulative for m in members),
@@ -212,29 +175,20 @@ class MoneyFlowAggregation:
             trading_days=self.trading_days + 1,
             main_net=self.main_net + flow.main_net,
             main_cnt=self.main_cnt + flow.main_cnt,
-            net_amount=self.net_amount + flow.net_amount,
-            huge_net=self._add_flow_opt(self.huge_net, flow.huge_net),
             huge_buy_net=self._add_flow_opt(self.huge_buy_net, flow.huge_buy_net),
             huge_sell_net=self._add_flow_opt(self.huge_sell_net, flow.huge_sell_net),
-            huge_cnt=self._add_flow_opt_int(self.huge_cnt, flow.huge_cnt),
             huge_buy_cnt=self._add_flow_opt_int(self.huge_buy_cnt, flow.huge_buy_cnt),
             huge_sell_cnt=self._add_flow_opt_int(self.huge_sell_cnt, flow.huge_sell_cnt),
-            large_net=self._add_flow_opt(self.large_net, flow.large_net),
             large_buy_net=self._add_flow_opt(self.large_buy_net, flow.large_buy_net),
             large_sell_net=self._add_flow_opt(self.large_sell_net, flow.large_sell_net),
-            large_cnt=self._add_flow_opt_int(self.large_cnt, flow.large_cnt),
             large_buy_cnt=self._add_flow_opt_int(self.large_buy_cnt, flow.large_buy_cnt),
             large_sell_cnt=self._add_flow_opt_int(self.large_sell_cnt, flow.large_sell_cnt),
-            medium_net=self._add_flow_opt(self.medium_net, flow.medium_net),
             medium_buy_net=self._add_flow_opt(self.medium_buy_net, flow.medium_buy_net),
             medium_sell_net=self._add_flow_opt(self.medium_sell_net, flow.medium_sell_net),
-            medium_cnt=self._add_flow_opt_int(self.medium_cnt, flow.medium_cnt),
             medium_buy_cnt=self._add_flow_opt_int(self.medium_buy_cnt, flow.medium_buy_cnt),
             medium_sell_cnt=self._add_flow_opt_int(self.medium_sell_cnt, flow.medium_sell_cnt),
-            small_net=self._add_flow_opt(self.small_net, flow.small_net),
             small_buy_net=self._add_flow_opt(self.small_buy_net, flow.small_buy_net),
             small_sell_net=self._add_flow_opt(self.small_sell_net, flow.small_sell_net),
-            small_cnt=self._add_flow_opt_int(self.small_cnt, flow.small_cnt),
             small_buy_cnt=self._add_flow_opt_int(self.small_buy_cnt, flow.small_buy_cnt),
             small_sell_cnt=self._add_flow_opt_int(self.small_sell_cnt, flow.small_sell_cnt),
             accumulative=self.accumulative
@@ -250,29 +204,20 @@ class MoneyFlowAggregation:
             trading_days=self.trading_days + other.trading_days,
             main_net=self.main_net + other.main_net,
             main_cnt=self.main_cnt + other.main_cnt,
-            net_amount=self.net_amount + other.net_amount,
-            huge_net=self._add_flow_opt(self.huge_net, other.huge_net),
             huge_buy_net=self._add_flow_opt(self.huge_buy_net, other.huge_buy_net),
             huge_sell_net=self._add_flow_opt(self.huge_sell_net, other.huge_sell_net),
-            huge_cnt=self._add_flow_opt_int(self.huge_cnt, other.huge_cnt),
             huge_buy_cnt=self._add_flow_opt_int(self.huge_buy_cnt, other.huge_buy_cnt),
             huge_sell_cnt=self._add_flow_opt_int(self.huge_sell_cnt, other.huge_sell_cnt),
-            large_net=self._add_flow_opt(self.large_net, other.large_net),
             large_buy_net=self._add_flow_opt(self.large_buy_net, other.large_buy_net),
             large_sell_net=self._add_flow_opt(self.large_sell_net, other.large_sell_net),
-            large_cnt=self._add_flow_opt_int(self.large_cnt, other.large_cnt),
             large_buy_cnt=self._add_flow_opt_int(self.large_buy_cnt, other.large_buy_cnt),
             large_sell_cnt=self._add_flow_opt_int(self.large_sell_cnt, other.large_sell_cnt),
-            medium_net=self._add_flow_opt(self.medium_net, other.medium_net),
             medium_buy_net=self._add_flow_opt(self.medium_buy_net, other.medium_buy_net),
             medium_sell_net=self._add_flow_opt(self.medium_sell_net, other.medium_sell_net),
-            medium_cnt=self._add_flow_opt_int(self.medium_cnt, other.medium_cnt),
             medium_buy_cnt=self._add_flow_opt_int(self.medium_buy_cnt, other.medium_buy_cnt),
             medium_sell_cnt=self._add_flow_opt_int(self.medium_sell_cnt, other.medium_sell_cnt),
-            small_net=self._add_flow_opt(self.small_net, other.small_net),
             small_buy_net=self._add_flow_opt(self.small_buy_net, other.small_buy_net),
             small_sell_net=self._add_flow_opt(self.small_sell_net, other.small_sell_net),
-            small_cnt=self._add_flow_opt_int(self.small_cnt, other.small_cnt),
             small_buy_cnt=self._add_flow_opt_int(self.small_buy_cnt, other.small_buy_cnt),
             small_sell_cnt=self._add_flow_opt_int(self.small_sell_cnt, other.small_sell_cnt),
             accumulative=self.accumulative or other.accumulative,

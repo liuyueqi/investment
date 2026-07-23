@@ -1,4 +1,5 @@
 # infra/database/schema.py
+
 from .connection import get_connection, DB_PATH
 from infra.log import logger
 
@@ -47,41 +48,32 @@ CREATE TABLE IF NOT EXISTS money_flows (
     code            TEXT NOT NULL,        -- 股票代码
     trade_date      TEXT NOT NULL,        -- '2025-06-08'
     period          TEXT NOT NULL DEFAULT 'day',  -- 粒度: day/week/month
-    main_cnt        INTEGER DEFAULT 0,   -- 主力笔数
-    main_net        REAL DEFAULT 0.0,    -- 主力净流入(万元)
-    net_amount      REAL DEFAULT 0.0,    -- 净主动买入额(万元)
+    main_cnt        INTEGER DEFAULT 0,   -- 净流入量(手)
+    main_net        REAL DEFAULT 0.0,    -- 净流入额(万元)
 
-    -- 超大单明细
-    huge_buy_cnt    INTEGER,             -- 超大单买入笔数
-    huge_buy_net    REAL,                -- 超大单买入金额(万元)
-    huge_sell_cnt   INTEGER,             -- 超大单卖出笔数
-    huge_sell_net   REAL,                -- 超大单卖出金额(万元)
-    huge_cnt        INTEGER,             -- 超大单净笔数
-    huge_net        REAL,                -- 超大单净流入(万元)
+    -- 特大单(Huge): >= 100万
+    huge_buy_cnt    INTEGER,             -- 特大单成交买方笔数
+    huge_buy_net    REAL,                -- 特大单成交买方金额(万元)
+    huge_sell_cnt   INTEGER,             -- 特大单成交卖方笔数
+    huge_sell_net   REAL,                -- 特大单成交卖方金额(万元)
 
-    -- 大单明细
+    -- 大单(Large): 20万 ~ 100万
     large_buy_cnt   INTEGER,
     large_buy_net   REAL,
     large_sell_cnt  INTEGER,
     large_sell_net  REAL,
-    large_cnt       INTEGER,
-    large_net       REAL,
 
-    -- 中单明细
+    -- 中单(Medium): 5万 ~ 20万
     medium_buy_cnt  INTEGER,
     medium_buy_net  REAL,
     medium_sell_cnt INTEGER,
     medium_sell_net REAL,
-    medium_cnt      INTEGER,
-    medium_net      REAL,
 
-    -- 小单明细
+    -- 小单(Small): 5万以下
     small_buy_cnt   INTEGER,
     small_buy_net   REAL,
     small_sell_cnt  INTEGER,
     small_sell_net  REAL,
-    small_cnt       INTEGER,
-    small_net       REAL,
 
     created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -122,37 +114,28 @@ CREATE TABLE IF NOT EXISTS money_flow_aggregation (
     -- 累计主要指标
     main_net             REAL DEFAULT 0.0,
     main_cnt             INTEGER DEFAULT 0,
-    net_amount           REAL DEFAULT 0.0,
 
     -- 超大单累计
-    huge_net             REAL,
     huge_buy_net         REAL,
     huge_sell_net        REAL,
-    huge_cnt             INTEGER,
     huge_buy_cnt         INTEGER,
     huge_sell_cnt        INTEGER,
 
     -- 大单累计
-    large_net            REAL,
     large_buy_net        REAL,
     large_sell_net       REAL,
-    large_cnt            INTEGER,
     large_buy_cnt        INTEGER,
     large_sell_cnt       INTEGER,
 
     -- 中单累计
-    medium_net           REAL,
     medium_buy_net       REAL,
     medium_sell_net      REAL,
-    medium_cnt           INTEGER,
     medium_buy_cnt       INTEGER,
     medium_sell_cnt      INTEGER,
 
     -- 小单累计
-    small_net            REAL,
     small_buy_net        REAL,
     small_sell_net       REAL,
-    small_cnt            INTEGER,
     small_buy_cnt        INTEGER,
     small_sell_cnt       INTEGER,
 
@@ -200,8 +183,6 @@ def init_db() -> None:
             ("sectors", "is_deleted INTEGER NOT NULL DEFAULT 0"),
             ("sector_members", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("sector_members", "is_deleted INTEGER NOT NULL DEFAULT 0"),
-            ("money_flows", "huge_net REAL"),
-            ("money_flows", "huge_cnt INTEGER"),
             ("money_flows", "huge_buy_cnt INTEGER"),
             ("money_flows", "huge_buy_net REAL"),
             ("money_flows", "huge_sell_cnt INTEGER"),

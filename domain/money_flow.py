@@ -6,54 +6,49 @@ from typing import Optional
 @dataclass
 class MoneyFlow:
     """
-    资金流向数据（支持任意时间粒度）
-    
-    粒度由 time 字段和 period 字段共同决定：
-    - period = "1min"  + time = "2025-06-08 09:31:00"  → 分钟级
-    - period = "day"   + time = "2025-06-08 00:00:00"  → 日级
-    - period = "week"  + time = "2025-06-02 00:00:00"  → 周级（周一日期）
-    - period = "month" + time = "2025-06-01 00:00:00"  → 月级（月首日期）
+        资金流向数据（支持任意时间粒度）
+        
+        数据来源: Tushare moneyflow 接口（通联数据源）
+        
+        接口文档：https://tushare.pro/document/2?doc_id=170
     """
+
     code: str                     # 股票代码
     time: datetime                # 时间点（分钟/日/周/月 的起始时刻）
     period: str                   # 粒度: "1min", "5min", "day", "week", "month"
-    main_cnt: int = 0             # 主力笔数
-    main_net: float = 0.0         # 主力资金净流入（万元）
-    net_amount: float = 0.0       # 净主动买入额（万元）
+    main_cnt: int = 0             # 净流入量(手)
+    main_net: float = 0.0         # 净流入额(万元)
 
-    # ========== 各粒度买入/卖出明细 ==========
+    # ========== 口径B：逐笔成交分类统计（按金额分类） ==========
 
-    # --- 超大单（Huge，原 super_large） ---
-    huge_buy_cnt: Optional[int] = None     # 超大单买入笔数
-    huge_buy_net: Optional[float] = None   # 超大单买入金额（万元）
-    huge_sell_cnt: Optional[int] = None    # 超大单卖出笔数
-    huge_sell_net: Optional[float] = None  # 超大单卖出金额（万元）
-    huge_cnt: Optional[int] = None         # 超大单净笔数
-    huge_net: Optional[float] = None       # 超大单净流入（万元）
+    # --- 特大单（Huge）：单笔成交额 >= 100万 ---
+    huge_buy_cnt: Optional[int] = None     # 特大单成交买方笔数
+    huge_buy_net: Optional[float] = None   # 特大单成交买方金额(万元)
+    huge_sell_cnt: Optional[int] = None    # 特大单成交卖方笔数
+    huge_sell_net: Optional[float] = None  # 特大单成交卖方金额(万元)
 
-    # --- 大单（Large） ---
+    # --- 大单（Large）：单笔成交额 20万 ~ 100万 ---
     large_buy_cnt: Optional[int] = None
     large_buy_net: Optional[float] = None
     large_sell_cnt: Optional[int] = None
     large_sell_net: Optional[float] = None
-    large_cnt: Optional[int] = None
-    large_net: Optional[float] = None
 
-    # --- 中单（Medium） ---
+    # --- 中单（Medium）：单笔成交额 5万 ~ 20万 ---
     medium_buy_cnt: Optional[int] = None
     medium_buy_net: Optional[float] = None
     medium_sell_cnt: Optional[int] = None
     medium_sell_net: Optional[float] = None
-    medium_cnt: Optional[int] = None
-    medium_net: Optional[float] = None
 
-    # --- 小单（Small） ---
+    # --- 小单（Small）：单笔成交额 5万以下 ---
     small_buy_cnt: Optional[int] = None
     small_buy_net: Optional[float] = None
     small_sell_cnt: Optional[int] = None
     small_sell_net: Optional[float] = None
-    small_cnt: Optional[int] = None
-    small_net: Optional[float] = None
+
+    # (以下为已废弃的派生计算字段，保留注释)
+    # huge_cnt / huge_net / large_cnt / large_net /
+    # medium_cnt / medium_net / small_cnt / small_net
+    # 可通过 buy_* - sell_* 计算得到
 
     # ========== 核心工厂方法 ==========
 

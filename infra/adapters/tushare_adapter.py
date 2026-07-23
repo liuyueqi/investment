@@ -48,14 +48,14 @@ class TushareAdapter(StockDataAdapter):
         end_date: Optional[date] = None
     ) -> List[MoneyFlow]:
         """
-        获取个股日级资金流向
-        接口: moneyflow（2000积分）
-        数据源: 同花顺
+            获取个股日级资金流向
+            
+            接口文档: https://tushare.pro/document/2?doc_id=170
 
-        Args:
-            code: 可选的股票代码（6位纯数字）
-            start_date: 查询起始日期
-            end_date: 查询结束日期
+            Args:
+                code: 可选的股票代码（6位纯数字）
+                start_date: 查询起始日期
+                end_date: 查询结束日期
         """
         try:
             params = {}
@@ -96,35 +96,35 @@ class TushareAdapter(StockDataAdapter):
                 net_mf_amount = row.get('net_mf_amount', 0.0)
 
                 money_flow = MoneyFlow.daily(
-                    code = ts_code.split('.')[0],  # 提取纯数字代码
+                    code = ts_code.split('.')[0],
                     date = trade_date,
-                    main_cnt = net_mf_vol,             # 主力笔数
-                    main_net = net_mf_amount,           # 主力净流入（万元）
-                    huge_buy_cnt = buy_elg_vol,               # 超大单买入笔数
-                    huge_buy_net = buy_elg_amount,           # 超大单买入金额（万元）
-                    huge_sell_cnt = sell_elg_vol,             # 超大单卖出笔数
-                    huge_sell_net = sell_elg_amount,         # 超大单卖出金额（万元）
-                    large_buy_cnt = buy_lg_vol, # 大单买入笔数
-                    large_buy_net = buy_lg_amount, # 大单买入金额（万元）
-                    large_sell_cnt = sell_lg_vol, # 大单卖出笔数
-                    large_sell_net = sell_lg_amount, # 大单卖出金额（万元）
-                    medium_buy_cnt = buy_md_vol, # 中单买入笔数
-                    medium_buy_net = buy_md_amount, # 中单买入金额（万元）
-                    medium_sell_cnt = sell_md_vol, # 中单卖出笔数
-                    medium_sell_net = sell_md_amount, # 中单卖出金额（万元）
-                    small_buy_cnt = buy_sm_vol, # 小单买入笔数
-                    small_buy_net = buy_sm_amount, # 小单买入金额（万元）
-                    small_sell_cnt = sell_sm_vol, # 小单卖出笔数
-                    small_sell_net = sell_sm_amount, # 小单卖出金额（万元）
-                    net_amount = net_mf_amount,  # 净主动买入额（万元）
-                    huge_cnt = buy_elg_vol - sell_elg_vol,  # 超大单笔数
-                    huge_net = buy_elg_amount - sell_elg_amount,  # 超大单净流入（万元）
-                    large_cnt = buy_lg_vol - sell_lg_vol,          # 大单笔数
-                    large_net = buy_lg_amount - sell_lg_amount,          # 大单净流入（万元）
-                    medium_cnt = buy_md_vol - sell_md_vol,         # 中单笔数
-                    medium_net = buy_md_amount - sell_md_amount,         # 中单净流入（万元）
-                    small_cnt = buy_sm_vol - sell_sm_vol,           # 小单笔数
-                    small_net = buy_sm_amount - sell_sm_amount,          # 小单净流入（万元）
+
+                    main_cnt = net_mf_vol,                      # 净流入量(手)
+                    main_net = net_mf_amount,                   # 净流入额(万元)
+                    
+                    # 逐笔成交分类统计（特大单 >= 100万）
+                    huge_buy_cnt = buy_elg_vol,                 # 特大单成交买方笔数
+                    huge_buy_net = buy_elg_amount,              # 特大单成交买方金额(万元)
+                    huge_sell_cnt = sell_elg_vol,               # 特大单成交卖方笔数
+                    huge_sell_net = sell_elg_amount,            # 特大单成交卖方金额(万元)
+                    
+                    # 大单 20万 ~ 100万
+                    large_buy_cnt = buy_lg_vol,
+                    large_buy_net = buy_lg_amount,
+                    large_sell_cnt = sell_lg_vol,
+                    large_sell_net = sell_lg_amount,
+                    
+                    # 中单 5万 ~ 20万
+                    medium_buy_cnt = buy_md_vol,
+                    medium_buy_net = buy_md_amount,
+                    medium_sell_cnt = sell_md_vol,
+                    medium_sell_net = sell_md_amount,
+                    
+                    # 小单 5万以下
+                    small_buy_cnt = buy_sm_vol,
+                    small_buy_net = buy_sm_amount,
+                    small_sell_cnt = sell_sm_vol,
+                    small_sell_net = sell_sm_amount,
                 )
                 money_flows.append(money_flow)
             return money_flows
