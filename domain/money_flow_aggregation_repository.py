@@ -1,5 +1,6 @@
 """资金流聚合数据仓库，管理 money_flow_aggregation 表"""
 
+import time
 import threading
 from datetime import date, datetime
 from typing import List, Dict, Optional
@@ -11,6 +12,8 @@ from infra.log import logger
 
 class MoneyFlowAggregationRepository:
     """资金流聚合数据仓库"""
+
+    _save_lock = threading.Lock()
 
     def __init__(self):
         self._accumulation_cache: Dict[str, List[MoneyFlowAggregation]] = {}
@@ -48,8 +51,10 @@ class MoneyFlowAggregationRepository:
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         params = [self._upsert_params(agg, now) for agg in aggs]
-        with get_db() as conn:
-            conn.executemany(self._UPSERT_SQL, params)
+
+        with self._save_lock:
+            with get_db() as conn:
+                conn.executemany(self._UPSERT_SQL, params)
 
     def clear_cache(self) -> None:
         with self._accumulation_lock:

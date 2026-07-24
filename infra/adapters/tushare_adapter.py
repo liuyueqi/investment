@@ -6,14 +6,13 @@ from datetime import date, datetime
 from typing import List, Optional
 from domain.money_flow import MoneyFlow
 from .stock_data_adapter import StockDataAdapter
-from context import TUSHARE_TOKEN_FILE
 from infra.log import logger
 
 class TushareAdapter(StockDataAdapter):
     """基于 Tushare Pro 的数据适配器"""
 
     _TOKEN_FILE_ENV = 'TUSHARE_TOKEN_FILE'
-    _DEFAULT_TOKEN_FILE = TUSHARE_TOKEN_FILE
+    _DEFAULT_TOKEN_FILE = Path(".tushare_token")
 
     def __init__(self):
         """
@@ -27,7 +26,7 @@ class TushareAdapter(StockDataAdapter):
 
     def _load_token(self) -> str:
 
-        token_file = TUSHARE_TOKEN_FILE.resolve()
+        token_file = Path(".tushare_token").resolve()
         if not token_file.exists():
             raise FileNotFoundError(
                 f'Tushare token file not found: {token_file}.\n'

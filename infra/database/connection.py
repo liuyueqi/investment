@@ -12,8 +12,7 @@ def _adapt_date(val: date) -> str:
 
 sqlite3.register_adapter(date, _adapt_date)
 
-from context import DATA_DIR
-
+DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "investment.db"
 
 

@@ -320,7 +320,7 @@ class MoneyFlowAggregator:
             try:
                 future.result()
             except Exception as e:
-                logger.error(f"板块计算子任务失败: {e}")
+                logger.error(f"板块 {sector} 计算子任务失败: {e}")
 
     def _aggregate_sector_accumulation(self, sector: Sector) -> None:
         """
