@@ -67,7 +67,10 @@ class MoneyFlowAggregation:
 
     @staticmethod
     def start_with_money_flows(*flows: MoneyFlow, accumulative: bool = False) -> "MoneyFlowAggregation":
-        """基于多条资金流向数据构造聚合实例，将所有 flow 各项值直接相加后返回"""
+        """
+            基于多条资金流向数据构造聚合实例，将所有 flow 各项值直接相加后返回
+        """
+
         if not flows:
             raise ValueError('至少需要一条 MoneyFlow 数据')
 
@@ -131,7 +134,10 @@ class MoneyFlowAggregation:
     
     @staticmethod
     def sector_aggregation_from_members(code: str, name: str, *members: "MoneyFlowAggregation") -> "MoneyFlowAggregation":
-        """基于多条成分股聚合数据，生成板块的累计聚合对象（直接求和，不产生中间对象）"""
+        """
+            基于多条成分股聚合数据，生成板块的累计聚合对象（直接求和，不产生中间对象）
+        """
+
         if not members:
             raise ValueError('至少需要一条成分股数据')
 
@@ -164,7 +170,9 @@ class MoneyFlowAggregation:
         )
 
     def accumulate(self, flow: MoneyFlow) -> "MoneyFlowAggregation":
-        """基于一条资金流向数据重新计算聚合值，累加后返回新对象（不修改当前实例）"""
+        """
+            基于一条资金流向数据重新计算聚合值，累加后返回新对象（不修改当前实例）
+        """
         
         flow_date = flow.time.date()
         return MoneyFlowAggregation(
@@ -195,13 +203,16 @@ class MoneyFlowAggregation:
         )
     
     def merge(self, other: "MoneyFlowAggregation") -> "MoneyFlowAggregation":
-        """与另一个聚合实例合并，将两者的各值相加后返回新对象（不修改当前实例）"""
+        """
+            与另一个聚合实例合并，维持当前实例的tranding_days，将两者的各值相加后返回新对象（不修改当前实例）
+        """
+
         return MoneyFlowAggregation(
             code=self.code,
             type=self.type,
             start_date=min(self.start_date, other.start_date),
             end_date=max(self.end_date, other.end_date),
-            trading_days=self.trading_days + other.trading_days,
+            trading_days=self.trading_days,
             main_net=self.main_net + other.main_net,
             main_cnt=self.main_cnt + other.main_cnt,
             huge_buy_net=self._add_flow_opt(self.huge_buy_net, other.huge_buy_net),

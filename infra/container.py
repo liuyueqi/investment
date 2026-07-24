@@ -70,7 +70,7 @@ class AppContainer(containers.DeclarativeContainer):
         agg_repo=money_flow_aggregation_repo,
         default_pool=default_pool,
         sector_aggr_pool=sector_aggr_pool,
-        calc_pool=sector_calc_pool,
+        sector_calc_pool=sector_calc_pool,
     )
 
     # ── 下载器（单例，注入依赖） ─────────────────────────────

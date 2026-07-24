@@ -33,11 +33,15 @@ class Console:
                     self._show_help()
                 elif cmd in ("download", "sync") :
                     self._downloader.download_all()
-                    self._aggregator.aggregate(None)
                     print("\n✅ download 完成")
                 elif cmd in ("aggregate", "aggr"):
-                    scope = parts[1] if len(parts) > 1 else None
-                    self._aggregator.aggregate(scope)
+                    args_cnt = len(parts) - 1
+                    scope = parts[1] if args_cnt > 0 else None
+                    if scope and args_cnt > 1:
+                        codes = parts[2:] if args_cnt > 1 else None
+                    else:
+                        codes = None
+                    self._aggregator.aggregate(scope, codes)
                     print("\n✅ aggregate 完成")
                 else:
                     print(f"未知命令: {cmd}。输入 help 查看可用命令。")
@@ -58,10 +62,10 @@ class Console:
 
     def _show_help(self) -> None:
         print("可用命令:")
-        print("  help                               - 显示帮助信息")
-        print("  download / sync                    - 下载股票 + 板块 + 资金流向 + 聚合")
-        print("  aggregate / aggr                   - 仅执行数据聚合")
-        print("    aggregate stock / aggr stock     - 仅执行股票数据聚合")
-        print("    aggregate sector / aggr sector   - 仅执行板块数据聚合")
-        print("  quit / exit                        - 退出控制台")
+        print("  help                                                       - 显示帮助信息")
+        print("  download / sync                                            - 下载股票 + 板块 + 资金流向 + 聚合")
+        print("  aggregate / aggr                                           - 仅执行数据聚合")
+        print("    aggregate stock [code ...] / aggr stock [code ...]       - 仅执行股票数据聚合")
+        print("    aggregate sector [code ...] / aggr sector [code ...]     - 仅执行板块数据聚合")
+        print("  quit / exit                                                - 退出控制台")
         print("-" * 60)

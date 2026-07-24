@@ -96,6 +96,22 @@ class StockRepository:
                 return None
             return Stock(code=row["code"], name=row["name"], market=row["market"])
 
+    def find_by_codes(self, codes: Optional[List[str]]) -> List[Stock]:
+        """根据一组股票代码批量查询"""
+        
+        if not codes:
+            return []
+        placeholders = ",".join("?" * len(codes))
+        with get_db() as conn:
+            rows = conn.execute(
+                f"""SELECT code, name, market
+                    FROM stocks
+                    WHERE code IN ({placeholders}) AND is_deleted = 0
+                    ORDER BY code""",
+                codes,
+            ).fetchall()
+            return [Stock(code=row["code"], name=row["name"], market=row["market"]) for row in rows]
+
     def get_all_codes(self) -> List[str]:
         """获取所有股票代码列表"""
         with get_db() as conn:
@@ -105,3 +121,4 @@ class StockRepository:
                    ORDER BY code"""
             ).fetchall()
             return [row["code"] for row in rows]
+

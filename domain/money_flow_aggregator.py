@@ -51,7 +51,7 @@ class MoneyFlowAggregator:
     #  公开接口
     # ════════════════════════════════════════════════════════════
 
-    def aggregate(self, scope: Optional[List[str]] = None) -> None:
+    def aggregate(self, scope: Optional[str] = None, codes: Optional[List[str]] = None) -> None:
         """
             对所有股票及板块执行聚合计算（入口方法）。
             依次计算：
@@ -62,22 +62,34 @@ class MoneyFlowAggregator:
         """
 
         if not scope or "stock" in scope:
-            stocks = self._stock_repo.find_all()
+
+            if codes:
+                stocks = self._stock_repo.find_by_codes(codes)
+            else:
+                stocks = self._stock_repo.find_all()
+
             if not stocks:
-                logger.warning("没有股票代码可聚合")
+                logger.warning("没有股票可聚合")
                 return
 
             logger.info(f"开始计算 {len(stocks)} 只股票的累计净流入...")
             self._aggregate_stocks(stocks)
 
         if not scope or "sector" in scope:
-            sectors = self._sector_repo.find_all()
+
+            if codes:
+                sectors = self._sector_repo.find_by_codes(codes)
+            else:
+                sectors = self._sector_repo.find_all()
+
             if not sectors:
+                logger.warning("没有板块可聚合")
                 return
 
             logger.info("开始计算板块累计净流入...")
             self._aggregate_sectors(sectors)
 
+        self._money_flow_agg_repo.clear_cache()
         logger.info("资金流聚合完成")
 
     # ════════════════════════════════════════════════════════════
@@ -143,7 +155,7 @@ class MoneyFlowAggregator:
               4. 逐日累加并保存新的累计记录
         """
 
-        # 查找已有累计记录
+        # 查找已有资金总量
         existing = self._money_flow_agg_repo.find_longest_accumulation(
             stock.code, AggregationType.STOCK
         )
@@ -155,11 +167,13 @@ class MoneyFlowAggregator:
                 return
             # 从次日开始读取 flow
             since = existing.end_date + timedelta(days=1)
+            logger.info(f"从 {since} 开始读取股票 {stock} 的资金净流入")
             flows = self._money_flow_repo.find_by_code_and_date_range(
                 stock.code, since, today,
             )
         else:
             # 读该股票的全量flow
+            logger.info(f"没有找到股票 {stock} 的资金总量，读取它的全量flow")
             flows = self._money_flow_repo.find_by_code(stock.code)
 
         if not flows:
@@ -222,11 +236,13 @@ class MoneyFlowAggregator:
                 return
             since = existing.start_date + timedelta(days=1)
             # 从次日开始读取 flow
+            logger.info(f"从 {since} 开始读取股票 {stock} 的资金净流入")
             flows = self._money_flow_repo.find_by_code_and_date_range(
                 stock.code, since, today,
             )
         else:
             # 读取全量 flow
+            logger.info(f"没有找到股票 {stock} 的 {window}日 净流入，读取它的全量flow")
             flows = self._money_flow_repo.find_by_code(stock.code)
 
         if not flows:
@@ -335,6 +351,8 @@ class MoneyFlowAggregator:
         else:
             since = None
 
+        logger.info(f"将从 {since if since else "最早"} 开始聚合板块 {sector} 的资金总量")
+
         # 遍历成员，逐只股票获取资金总量数据并合并
         sector_accumulation: Dict[date, MoneyFlowAggregation] = {}
         for member in sector.members:
@@ -401,6 +419,8 @@ class MoneyFlowAggregator:
             since = existing.start_date + timedelta(days=1)
         else:
             since = None
+
+        logger.info(f"将从 {since if since else "最早"} 开始聚合板块 {sector} 的 {window}天 净流入")
 
         # 遍历成员，逐只股票获取滑动窗口数据并合并
         sector_sliding: Dict[date, MoneyFlowAggregation] = {}

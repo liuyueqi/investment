@@ -185,6 +185,41 @@ class SectorRepository:
                 members=members,
             )
 
+    def find_by_codes(self, codes: Optional[List[str]]) -> List[Sector]:
+        """根据一组板块代码批量查询板块信息及成分股"""
+        
+        if not codes:
+            return []
+        placeholders = ",".join("?" * len(codes))
+        with get_db() as conn:
+            rows = conn.execute(
+                f"""SELECT code, name, type
+                    FROM sectors
+                    WHERE code IN ({placeholders}) AND is_deleted = 0
+                    ORDER BY code""",
+                codes,
+            ).fetchall()
+
+            sectors = []
+            for row in rows:
+                member_rows = conn.execute(
+                    """SELECT stock_code
+                       FROM sector_members
+                       WHERE sector_code = ? AND is_deleted = 0
+                       ORDER BY stock_code""",
+                    (row["code"],),
+                ).fetchall()
+                members = [r["stock_code"] for r in member_rows]
+
+                sectors.append(Sector(
+                    code=row["code"],
+                    name=row["name"],
+                    type=SectorType(row["type"]),
+                    members=members,
+                ))
+
+            return sectors
+
     def find_all(self) -> List[Sector]:
         """获取所有板块信息及成分股"""
         with get_db() as conn:

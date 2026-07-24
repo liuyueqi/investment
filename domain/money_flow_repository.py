@@ -274,22 +274,6 @@ class MoneyFlowRepository:
                         
         return (earliest_date, latest_date)
 
-        for i in range(0, len(codes), self._BATCH_SIZE):
-            batch = codes[i:i + self._BATCH_SIZE]
-            placeholders = ','.join(['?' for _ in batch])
-            sql = f"""SELECT code,
-                               MIN(trade_date) as start_date,
-                               MAX(trade_date) as end_date
-                          FROM money_flows
-                         WHERE code IN ({placeholders})
-                           AND period = 'day'
-                           AND is_deleted = 0
-                         GROUP BY code"""
-            with get_db() as conn:
-                rows = conn.execute(sql, batch).fetchall()
-                for row in rows:
-                    result[row['code']] = (row['start_date'], row['end_date'])
-        return result
     def _row_to_money_flow(self, row) -> MoneyFlow:
         """将数据库行记录转换为 MoneyFlow 实体"""
         trade_date = datetime.strptime(row["trade_date"], "%Y-%m-%d")
