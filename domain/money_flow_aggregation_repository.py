@@ -5,7 +5,7 @@ import threading
 from datetime import date, datetime
 from typing import List, Dict, Optional
 
-from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
+from domain.money_flow_aggregation import MoneyFlowAggregation
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -82,38 +82,41 @@ class MoneyFlowAggregationRepository:
         )
 
     def find_by_date_range(
-            self, code: str, type: str, start_date: date, end_date: date
+            self, 
+            code: str, 
+            start_date: date, 
+            end_date: date, 
+            accumulative: bool
     ) -> Optional[MoneyFlowAggregation]:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT * FROM money_flow_aggregation
                    WHERE code = ?
-                     AND type = ?
                      AND start_date = ?
-                     AND end_date = ?""",
-                (code, type, start_date.isoformat(), end_date.isoformat()),
+                     AND end_date = ?
+                     AND is_accumulative = ?""",
+                (code, start_date.isoformat(), end_date.isoformat(), int(accumulative)),
             ).fetchone()
             return self._row_to_agg(row) if row else None
 
-    def find_longest_accumulation(
-            self, code: str, type: str,
-    ) -> Optional[MoneyFlowAggregation]:
+    def find_longest_accumulation(self, code: str) -> Optional[MoneyFlowAggregation]:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT * FROM money_flow_aggregation
                    WHERE code = ?
-                     AND type = ?
                      AND is_accumulative = 1
                    ORDER BY trading_days DESC
-                   LIMIT 1""",
-                (code, type),
+                   LIMIT 1""", (code,)
             ).fetchone()
             return self._row_to_agg(row) if row else None
 
     def find_accumulations_by_code(
-            self, code: str, type: str, since: Optional[date], force: bool = False,
+            self, 
+            code: str, 
+            since: Optional[date], 
+            force: bool = False,
     ) -> List[MoneyFlowAggregation]:
-        cache_key = f"{type}:{code}"
+        cache_key = f"{code}"
 
         with self._accumulation_lock:
             if not force and cache_key in self._accumulation_cache:
@@ -123,9 +126,8 @@ class MoneyFlowAggregationRepository:
                 return [c for c in cached if c.end_date >= since]
 
         sql = """SELECT * FROM money_flow_aggregation
-                   WHERE code = ?
-                     AND type = ? """
-        params: List = [code, type]
+                   WHERE code = ? """
+        params: List = [code]
 
         if since:
             sql = sql + """ AND end_date >= ? """
@@ -141,26 +143,27 @@ class MoneyFlowAggregationRepository:
                 self._accumulation_cache[cache_key] = result
             return result
 
-    def find_latest_by_trading_days(
-            self, code: str, type: str, trading_days: int
-    ) -> Optional[MoneyFlowAggregation]:
+    def find_latest_by_trading_days(self, code: str, trading_days: int) -> Optional[MoneyFlowAggregation]:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT * FROM money_flow_aggregation
                    WHERE code = ?
-                     AND type = ?
                      AND trading_days = ?
+                     AND is_accumulative = 0
                    ORDER BY start_date DESC
                    LIMIT 1""",
-                (code, type, trading_days),
+                (code, trading_days),
             ).fetchone()
             return self._row_to_agg(row) if row else None
 
     def find_by_trading_days(
-            self, code: str, type: str, trading_days: int,
-            since: Optional[date], force: bool = False,
+            self, 
+            code: str, 
+            trading_days: int,
+            since: Optional[date], 
+            force: bool = False,
     ) -> List[MoneyFlowAggregation]:
-        cache_key = f"{type}:{code}:{trading_days}d"
+        cache_key = f"{code}:{trading_days}d"
 
         with self._sliding_lock:
             if not force and cache_key in self._sliding_cache:
@@ -169,11 +172,11 @@ class MoneyFlowAggregationRepository:
                     return cached
                 return [c for c in cached if c.start_date >= since]
 
-        sql = """SELECT * FROM money_flow_aggregation
-                   WHERE code = ?
-                     AND type = ?
-                     AND trading_days = ? """
-        params: List = [code, type, trading_days]
+        sql = """SELECT * FROM money_flow_aggregation 
+                    WHERE code = ?
+                    AND trading_days = ?
+                    AND is_accumulative = 0 """
+        params: List = [code, trading_days]
 
         if since:
             sql = sql + """ AND start_date >= ? """

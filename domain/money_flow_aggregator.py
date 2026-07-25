@@ -156,10 +156,7 @@ class MoneyFlowAggregator:
         """
 
         # 查找已有资金总量
-        existing = self._money_flow_agg_repo.find_longest_accumulation(
-            stock.code, AggregationType.STOCK
-        )
-
+        existing = self._money_flow_agg_repo.find_longest_accumulation(stock.code)
         if existing:
             today = date.today()
             if existing.end_date >= today:
@@ -225,10 +222,7 @@ class MoneyFlowAggregator:
         """
 
         # 查找已有记录，确定从哪里开始续算
-        existing = self._money_flow_agg_repo.find_latest_by_trading_days(
-            stock.code, AggregationType.STOCK, window,
-        )
-
+        existing = self._money_flow_agg_repo.find_latest_by_trading_days(stock.code, window)
         if existing:
             today = date.today()
             if existing.end_date >= today:
@@ -338,10 +332,7 @@ class MoneyFlowAggregator:
         """
 
         # 查找已有板块累计记录
-        existing = self._money_flow_agg_repo.find_longest_accumulation(
-            sector.code, AggregationType.SECTOR,
-        )
-
+        existing = self._money_flow_agg_repo.find_longest_accumulation(sector.code)
         if existing:
             if existing.end_date >= date.today():
                 logger.info(f"板块 {sector} 的资金总量已统计到今天。")
@@ -384,9 +375,7 @@ class MoneyFlowAggregator:
         """
 
         # 读取成分股的资金总量数据
-        existing_accumulations = self._money_flow_agg_repo.find_accumulations_by_code(
-            member, AggregationType.STOCK, since
-        )
+        existing_accumulations = self._money_flow_agg_repo.find_accumulations_by_code(member, since)
 
         # 每一天的资金总量，key为资金总量的截止日期
         member_accumulations: Dict[date, MoneyFlowAggregation] = {} 
@@ -406,10 +395,7 @@ class MoneyFlowAggregator:
                 window (int):    窗口天数，如 3、5、10、20
         """
         
-        existing = self._money_flow_agg_repo.find_latest_by_trading_days(
-            sector.code, AggregationType.SECTOR, window
-        )
-
+        existing = self._money_flow_agg_repo.find_latest_by_trading_days(sector.code, window)
         if existing:
             today = date.today()
             if existing.end_date >= today:
@@ -452,9 +438,7 @@ class MoneyFlowAggregator:
             Returns:
                 key 为 start_date，value 为对应日期的滑动窗口聚合对象
         """
-        existing_sliding = self._money_flow_agg_repo.find_by_trading_days(
-            member, AggregationType.STOCK, window, since
-        )
+        existing_sliding = self._money_flow_agg_repo.find_by_trading_days(member, window, since)
 
         member_sliding: Dict[date, MoneyFlowAggregation] = {}
         if existing_sliding:
