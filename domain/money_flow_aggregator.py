@@ -342,7 +342,7 @@ class MoneyFlowAggregator:
         else:
             since = None
 
-        logger.info(f"将从 {since if since else "最早"} 开始聚合板块 {sector} 的资金总量")
+        logger.info(f"将从 {since if since else '最早'} 开始聚合板块 {sector} 的资金总量")
 
         # 遍历成员，逐只股票获取资金总量数据并合并
         sector_accumulation: Dict[date, MoneyFlowAggregation] = {}
@@ -406,7 +406,7 @@ class MoneyFlowAggregator:
         else:
             since = None
 
-        logger.info(f"将从 {since if since else "最早"} 开始聚合板块 {sector} 的 {window}天 净流入")
+        logger.info(f"将从 {since if since else '最早'} 开始聚合板块 {sector} 的 {window}天 净流入")
 
         # 遍历成员，逐只股票获取滑动窗口数据并合并
         sector_sliding: Dict[date, MoneyFlowAggregation] = {}

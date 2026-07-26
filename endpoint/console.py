@@ -1,10 +1,10 @@
 """交互式控制台：通过命令执行数据下载、聚合和启动看板"""
 
 import shlex
-import subprocess
 import sys
 
 from infra.container import container
+from endpoint.dashboard import Dashboard
 
 
 class Console:
@@ -46,14 +46,7 @@ class Console:
                     self._aggregator.aggregate(scope, codes)
                     print("\n✅ aggregate 完成")
                 elif cmd == "dashboard":
-                    print("\n正在启动数据看板...")
-                    print("请在浏览器中访问: http://localhost:8501")
-                    print("或在终端运行: streamlit run endpoint/dashboard.py")
-                    subprocess.Popen(
-                        [sys.executable, "-m", "streamlit", "run", "endpoint/dashboard.py"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
+                    Dashboard.launch()
                 else:
                     print(f"未知命令: {cmd}。输入 help 查看可用命令。")
 
