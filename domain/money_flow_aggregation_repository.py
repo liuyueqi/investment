@@ -11,7 +11,9 @@ from infra.log import logger
 
 
 class MoneyFlowAggregationRepository:
-    """资金流聚合数据仓库"""
+    """
+        资金流聚合数据仓库
+    """
 
     _save_lock = threading.Lock()
 
@@ -21,7 +23,11 @@ class MoneyFlowAggregationRepository:
         self._accumulation_lock = threading.RLock()
         self._sliding_lock = threading.RLock()
 
-    _UPSERT_SQL = """INSERT OR REPLACE INTO money_flow_aggregation (
+    def save(self, *aggs: MoneyFlowAggregation) -> None:
+        if not aggs:
+            return
+
+        sql = """INSERT OR REPLACE INTO money_flow_aggregation (
                        code, type, start_date, end_date, trading_days, is_accumulative,
                        main_net, main_cnt,
                        huge_buy_net, huge_sell_net,
@@ -44,17 +50,12 @@ class MoneyFlowAggregationRepository:
                              ?, ?,
                              ?, ?,
                              ?, ?)"""
-
-    def save(self, *aggs: MoneyFlowAggregation) -> None:
-        if not aggs:
-            return
-
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         params = [self._upsert_params(agg, now) for agg in aggs]
 
         with self._save_lock:
             with get_db() as conn:
-                conn.executemany(self._UPSERT_SQL, params)
+                conn.executemany(sql, params)
 
     def clear_cache(self) -> None:
         with self._accumulation_lock:
@@ -116,8 +117,8 @@ class MoneyFlowAggregationRepository:
             since: Optional[date], 
             force: bool = False,
     ) -> List[MoneyFlowAggregation]:
-        cache_key = f"{code}"
 
+        cache_key = f"{code}"
         with self._accumulation_lock:
             if not force and cache_key in self._accumulation_cache:
                 cached = self._accumulation_cache[cache_key]
@@ -143,52 +144,40 @@ class MoneyFlowAggregationRepository:
                 self._accumulation_cache[cache_key] = result
             return result
 
-    def find_latest_by_trading_days(self, code: str, trading_days: int) -> Optional[MoneyFlowAggregation]:
-        with get_db() as conn:
-            row = conn.execute(
-                """SELECT * FROM money_flow_aggregation
-                   WHERE code = ?
-                     AND trading_days = ?
-                     AND is_accumulative = 0
-                   ORDER BY start_date DESC
-                   LIMIT 1""",
-                (code, trading_days),
-            ).fetchone()
-            return self._row_to_agg(row) if row else None
+    def find_latest_sliding_for_windows(
+            self,
+            code: str,
+            windows: List[int],
+    ) -> Dict[int, Optional[MoneyFlowAggregation]]:
+        """
+            查询指定 code 在多个窗口下的最新滑动窗口记录，返回 {window: latest_agg}
+        """
 
-    def find_by_trading_days(
-            self, 
-            code: str, 
-            trading_days: int,
-            since: Optional[date], 
-            force: bool = False,
-    ) -> List[MoneyFlowAggregation]:
-        cache_key = f"{code}:{trading_days}d"
+        if not windows:
+            return {}
 
-        with self._sliding_lock:
-            if not force and cache_key in self._sliding_cache:
-                cached = self._sliding_cache[cache_key]
-                if since is None:
-                    return cached
-                return [c for c in cached if c.start_date >= since]
-
-        sql = """SELECT * FROM money_flow_aggregation 
-                    WHERE code = ?
-                    AND trading_days = ?
-                    AND is_accumulative = 0 """
-        params: List = [code, trading_days]
-
-        if since:
-            sql = sql + """ AND start_date >= ? """
-            params.append(since)
-        sql = sql + """ ORDER BY start_date """
+        placeholders = ",".join("?" * len(windows))
+        sql = f"""SELECT m.* FROM money_flow_aggregation m
+                  INNER JOIN (
+                      SELECT trading_days, MAX(start_date) as max_start
+                      FROM money_flow_aggregation
+                      WHERE code = ?
+                        AND trading_days IN ({placeholders})
+                        AND is_accumulative = 0
+                      GROUP BY trading_days
+                  ) t ON m.code = ?
+                      AND m.trading_days = t.trading_days
+                      AND m.start_date = t.max_start
+                      AND m.is_accumulative = 0"""
 
         with get_db() as conn:
-            rows = conn.execute(sql, params).fetchall()
-            result = self._rows_to_aggs(rows)
-            with self._sliding_lock:
-                self._sliding_cache[cache_key] = result
-            return result
+            rows = conn.execute(sql, [code] + windows + [code]).fetchall()
+
+        result: Dict[int, Optional[MoneyFlowAggregation]] = {w: None for w in windows}
+        for row in rows:
+            td = row["trading_days"]
+            result[td] = self._row_to_agg(row)
+        return result
 
     def _rows_to_aggs(self, rows) -> List[MoneyFlowAggregation]:
         result: List[MoneyFlowAggregation] = []

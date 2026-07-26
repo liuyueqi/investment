@@ -127,8 +127,7 @@ class MoneyFlowRepository:
         last_trading_day = self._get_last_trading_day()
         return last_date >= last_trading_day
 
-    @staticmethod
-    def _get_last_trading_day() -> date:
+    def _get_last_trading_day(self) -> date:
         """获取最近一个交易日"""
         today = date.today()
         weekday = today.weekday()
@@ -218,7 +217,11 @@ class MoneyFlowRepository:
             return result
 
     def find_by_code_and_date_range(
-        self, code: str, start_date: date, end_date: date, force: bool = False
+        self, 
+        code: str, 
+        start_date: date, 
+        end_date: date, 
+        force: bool = False
     ) -> List[MoneyFlow]:
         """
             按股票代码和日期范围查询资金流向记录。
@@ -233,7 +236,7 @@ class MoneyFlowRepository:
             Returns:
                 符合条件的资金流向记录列表
         """
-        all_flows = self.find_by_code(code, force=force)
+        all_flows = self.find_by_code(code, force)
         return [
             f for f in all_flows
             if f.time.date() >= start_date and f.time.date() <= end_date

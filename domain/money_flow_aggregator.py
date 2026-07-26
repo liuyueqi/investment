@@ -1,6 +1,6 @@
 """资金流聚合器：从 money_flows 原始数据计算生成 money_flow_aggregation"""
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, Future, as_completed
 from datetime import date, datetime, timedelta
 from typing import List, Dict, Optional
 
@@ -186,7 +186,15 @@ class MoneyFlowAggregator:
                 if existing:
                     new_agg = existing.accumulate(flow)
                 else:
-                    new_agg = MoneyFlowAggregation.start_with_money_flows(flow, accumulative=True)
+                    # new_agg = MoneyFlowAggregation.start_with_money_flows(flow, accumulative=True)
+                    new_agg = MoneyFlowAggregation.create(
+                        code=stock.code,
+                        start_date=flow.time.date(),
+                        end_date=flow.time.date(),
+                        trading_days=1,
+                        accumulative=True,
+                        *flow
+                    )
             new_aggs.append(new_agg)
 
         # 批量保存
@@ -202,10 +210,16 @@ class MoneyFlowAggregator:
                 stock (Stock): 待计算的股票对象
         """
         
+        existing_of_windows = self._money_flow_agg_repo.find_latest_sliding_for_windows(stock.code, self._TRADING_DAYS)
         for window in self._TRADING_DAYS:
-            self._aggregate_stock_sliding_by_window(stock, window)
+            self._aggregate_stock_sliding_by_window(stock, window, existing_of_windows.get(window))
 
-    def _aggregate_stock_sliding_by_window(self, stock: Stock, window: int) -> None:
+    def _aggregate_stock_sliding_by_window(
+            self, 
+            stock: Stock, 
+            window: int, 
+            existing: Optional[MoneyFlowAggregation] = None
+    ) -> None:
         """
             计算单只股票指定窗口天数的滑动窗口净流入。
             支持增量续算：先查该窗口的最新记录，从次日开始追加。
@@ -213,16 +227,13 @@ class MoneyFlowAggregator:
             Args:
                 stock (Stock):  待计算的股票对象
                 window (int):   窗口天数，如 3、5、10、20
+                existing (Optional[MoneyFlowAggregation]): 该窗口已存在的最新记录
 
             逻辑：
-              1. 查询该股票该窗口的最新已有记录
-              2. 若已统计到今天则跳过
-              3. 从现有记录之后拉取原始 flow
-              4. 以 window 为单位滑动计算并保存
+              1. 若已有该窗口的最新记录，从次日开始追加
+              2. 以 window 为单位滑动计算并保存
         """
 
-        # 查找已有记录，确定从哪里开始续算
-        existing = self._money_flow_agg_repo.find_latest_by_trading_days(stock.code, window)
         if existing:
             today = date.today()
             if existing.end_date >= today:
@@ -251,8 +262,16 @@ class MoneyFlowAggregator:
             if i + window > count:
                 break
 
-            slice_flows = flows[i : i + window]
-            agg = MoneyFlowAggregation.start_with_money_flows(*slice_flows)
+            slide_flows = flows[i : i + window]
+            # agg = MoneyFlowAggregation.start_with_money_flows(*slide_flows)
+            agg = MoneyFlowAggregation.create(
+                code = stock.code,
+                start_date=slide_flows[0].time.date(),
+                end_date=slide_flows[-1].time.date(),
+                trading_days=len(slide_flows),
+                accumulative=False,
+                *slide_flows
+            )
             new_aggs.append(agg)
 
         # 批量保存
@@ -308,8 +327,7 @@ class MoneyFlowAggregator:
         # 用 calc_pool 并行执行资金总量和 4 种窗口的滑动计算
         futures = []
         futures.append(self._sector_calc_pool.submit(self._aggregate_sector_accumulation, sector))
-        for window in self._TRADING_DAYS:
-            futures.append(self._sector_calc_pool.submit(self._aggregate_sector_sliding, sector, window))
+        futures = futures + self._aggregate_sector_sliding(sector)
         for future in as_completed(futures):
             try:
                 future.result()
@@ -361,7 +379,9 @@ class MoneyFlowAggregator:
         logger.info(f"保存了 {len(sector_accumulation)} 条板块 {sector} 的资金总量数据")
             
     def _aggregate_member_accumulation(
-            self, member: str, since: Optional[date] = None,
+            self, 
+            member: str, 
+            since: Optional[date] = None,
     ) -> Dict[date, MoneyFlowAggregation]:
         """
             读取板块指定成分股的资金总量数据，以 end_date -> MoneyFlowAggregation 的字典格式返回。
@@ -385,111 +405,94 @@ class MoneyFlowAggregator:
 
         return member_accumulations
 
-    def _aggregate_sector_sliding(self, sector: Sector, window: int) -> None:
+    def _aggregate_sector_sliding(self, sector: Sector) -> List[Future]:
         """
             计算板块指定窗口天数的滑动窗口净流入。
             基于各成分股已计算好的个股滑动窗口数据，按 start_date 对齐后合并为板块数据。
 
             Args:
                 sector (Sector): 待计算的板块对象
-                window (int):    窗口天数，如 3、5、10、20
         """
-        
-        existing = self._money_flow_agg_repo.find_latest_by_trading_days(sector.code, window)
-        if existing:
-            today = date.today()
-            if existing.end_date >= today:
-                logger.info(f"板块 {sector} 的资金总量已统计到今天。")
-                return
-            # N天净流入关注start_date，从次日开始读取flow
-            since = existing.start_date + timedelta(days=1)
-        else:
+
+        latest_sliding_of_windows = self._money_flow_agg_repo.find_latest_sliding_for_windows(sector.code, self._TRADING_DAYS)
+        if any(v is None for v in latest_sliding_of_windows.values()):
             since = None
+        else:
+            since = min(v.start_date for v in latest_sliding_of_windows.values() if v) + timedelta(days=1)
 
-        logger.info(f"将从 {since if since else '最早'} 开始聚合板块 {sector} 的 {window}天 净流入")
+        logger.info(f"将从 {since if since else '最早'} 开始聚合板块 {sector} 的N日净流入")
+        member_flows_of_date = self._group_member_money_flows_by_date(sector, since)
 
-        # 遍历成员，逐只股票获取滑动窗口数据并合并
-        sector_sliding: Dict[date, MoneyFlowAggregation] = {}
+        futures = []
+        for window in self._TRADING_DAYS:
+            latest_sliding = latest_sliding_of_windows.get(window)
+            latest_date_of_window = latest_sliding.start_date if latest_sliding else None
+
+            future = self._sector_calc_pool.submit(
+                self._aggregate_member_sliding, 
+                sector=sector, 
+                window=window, 
+                latest_date=latest_date_of_window, 
+                member_flows_of_date=member_flows_of_date
+            )
+            futures.append(future)
+        return futures
+                
+    def _group_member_money_flows_by_date(self, sector: Sector, since: Optional[date]) -> Dict[date, List[MoneyFlow]]:
+
+        money_flows_of_date: Dict[date, List[MoneyFlow]] = {}
         for member in sector.members:
-            member_sliding = self._aggregate_member_sliding(member, window, since)
-            for sliding_date, sliding in member_sliding.items():
-                if sliding_date in sector_sliding:
-                    ex_sliding = sector_sliding[sliding_date]
-                    sector_sliding[sliding_date] = ex_sliding.merge(sliding)
-                else:
-                    sector_sliding[sliding_date] = MoneyFlowAggregation.sector_aggregation_from_members(
-                        sector.code, sector.name, sliding
-                    )
+            if since:
+                money_flows = self._money_flow_repo.find_by_code_and_date_range(member, since, date.today())
+            else:
+                money_flows = self._money_flow_repo.find_by_code(member)
 
-        self._money_flow_agg_repo.save(*sector_sliding.values())
-        logger.info(f"保存了 {len(sector_sliding)} 条板块 {sector} 的 {window}天 净流入数据")
+            for money_flow in money_flows:
+                if money_flow.time in money_flows_of_date:
+                    money_flows_of_date[money_flow.time].append(money_flow)
+                else:
+                    money_flows_of_date[money_flow.time] = [money_flow]
+                    
+        return money_flows_of_date
 
     def _aggregate_member_sliding(
-            self, member: str, window: int, since: Optional[date],
-    ) -> Dict[date, MoneyFlowAggregation]:
-        """
-            读取板块指定成分股的滑动窗口数据，以 start_date -> MoneyFlowAggregation 的字典格式返回。
+            self, 
+            sector: Sector, 
+            window: int,
+            latest_date: Optional[date], 
+            member_flows_of_date: Dict[date, List[MoneyFlow]]
+    ) -> None:
 
-            Args:
-                member (str):     板块成分股代码
-                window (int):     窗口天数，如 3、5、10、20
-                since (date):     起始日期（含），只返回 start_date >= since 的记录。为 None 时返回全部。
+        money_flow_dates = sorted(member_flows_of_date)
+        date_count = len(money_flow_dates)
 
-            Returns:
-                key 为 start_date，value 为对应日期的滑动窗口聚合对象
-        """
-        existing_sliding = self._money_flow_agg_repo.find_by_trading_days(member, window, since)
+        new_aggs = []
+        for i, money_flow_date in enumerate(money_flow_dates):
 
-        member_sliding: Dict[date, MoneyFlowAggregation] = {}
-        if existing_sliding:
-            for sliding in existing_sliding:
-                member_sliding[sliding.start_date] = sliding
+            # 跳过已有记录
+            if latest_date and latest_date >= money_flow_date:
+                continue
 
-        return member_sliding
+            if i + window > date_count:
+                break
 
-    # ════════════════════════════════════════════════════════════
-    #  辅助方法
-    # ════════════════════════════════════════════════════════════
+            if len(new_aggs) > 0:
+                logger.info(f"将从 {money_flow_date} 开始聚合板块 {sector} 的 {window}日 净流入")
 
-    @staticmethod
-    def _load_all_stock_codes() -> List[str]:
-        """
-            从数据库获取所有未删除的股票代码列表。
+            window_dates = money_flow_dates[i : i + window]
+            window_flows = []
+            for window_date in window_dates:
+                window_flows.extend(member_flows_of_date[window_date])
 
-            Returns:
-                未删除的股票代码列表（按 code 升序）
-        """
-        from infra.database.connection import get_db
-        with get_db() as conn:
-            rows = conn.execute(
-                "SELECT code FROM stocks WHERE is_deleted = 0 ORDER BY code"
-            ).fetchall()
-            return [row["code"] for row in rows]
+            new_agg = MoneyFlowAggregation.create(
+                code=sector.code, 
+                start_date=window_dates[0], 
+                end_date=window_dates[-1],
+                trading_days=window, 
+                accumulative=False, 
+                *window_flows
+            )
+            new_aggs.append(new_agg)
 
-    @staticmethod
-    def _safe_sum(values) -> Optional[float]:
-        """
-            安全求和：过滤 None 值后求和。
-
-            Args:
-                values: 可迭代的 float 值（可能含 None）
-
-            Returns:
-                总和（若全部为 None 则返回 None）
-        """
-        filtered = [v for v in values if v is not None]
-        return sum(filtered) if filtered else None
-
-    @staticmethod
-    def _safe_sum_int(values) -> Optional[int]:
-        """
-            安全求和：过滤 None 值后求和（整数版本）。
-
-            Args:
-                values: 可迭代的 int 值（可能含 None）
-
-            Returns:
-                总和（若全部为 None 则返回 None）
-        """
-        filtered = [v for v in values if v is not None]
-        return sum(filtered) if filtered else None
+        self._money_flow_agg_repo.save(*new_aggs)
+        logger.info(f"保存了 {len(new_aggs)} 条板块 {sector} 的 {window}日 净流入数据")

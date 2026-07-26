@@ -63,54 +63,45 @@ class MoneyFlowAggregation:
     small_sell_cnt: Optional[int] = None
 
     name: Optional[str] = None    # 实体名称（冗余，方便查表）
-    accumulative: bool = False        
+    accumulative: bool = False
 
     @staticmethod
-    def start_with_money_flows(*flows: MoneyFlow, accumulative: bool = False) -> "MoneyFlowAggregation":
-        """
-            基于多条资金流向数据构造聚合实例，将所有 flow 各项值直接相加后返回
-        """
+    def create(
+        code: str, 
+        start_date: date, 
+        end_date: date, 
+        trading_days: int, 
+        accumulative: bool, 
+        *money_flows: MoneyFlow
+    ):
+        total_main_net = sum(f.main_net for f in money_flows)
+        total_main_cnt = sum(f.main_cnt for f in money_flows)
+        total_huge_buy_net = MoneyFlowAggregation._sum_opt(f.huge_buy_net for f in money_flows)
+        total_huge_sell_net = MoneyFlowAggregation._sum_opt(f.huge_sell_net for f in money_flows)
+        total_huge_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_buy_cnt for f in money_flows)
+        total_huge_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_sell_cnt for f in money_flows)
 
-        if not flows:
-            raise ValueError('至少需要一条 MoneyFlow 数据')
+        total_large_buy_net = MoneyFlowAggregation._sum_opt(f.large_buy_net for f in money_flows)
+        total_large_sell_net = MoneyFlowAggregation._sum_opt(f.large_sell_net for f in money_flows)
+        total_large_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.large_buy_cnt for f in money_flows)
+        total_large_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.large_sell_cnt for f in money_flows)
 
-        first = flows[0]
-        last = flows[-1]
-        mf_type = (
-            AggregationType.STOCK
-            if first.code and first.code[0].isdigit()
-            else AggregationType.SECTOR
-        )
+        total_medium_buy_net = MoneyFlowAggregation._sum_opt(f.medium_buy_net for f in money_flows)
+        total_medium_sell_net = MoneyFlowAggregation._sum_opt(f.medium_sell_net for f in money_flows)
+        total_medium_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_buy_cnt for f in money_flows)
+        total_medium_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_sell_cnt for f in money_flows)
 
-        # 直接累加所有 flow 的各项值
-        total_main_net = sum(f.main_net for f in flows)
-        total_main_cnt = sum(f.main_cnt for f in flows)
-        total_huge_buy_net = MoneyFlowAggregation._sum_opt(f.huge_buy_net for f in flows)
-        total_huge_sell_net = MoneyFlowAggregation._sum_opt(f.huge_sell_net for f in flows)
-        total_huge_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_buy_cnt for f in flows)
-        total_huge_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_sell_cnt for f in flows)
-
-        total_large_buy_net = MoneyFlowAggregation._sum_opt(f.large_buy_net for f in flows)
-        total_large_sell_net = MoneyFlowAggregation._sum_opt(f.large_sell_net for f in flows)
-        total_large_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.large_buy_cnt for f in flows)
-        total_large_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.large_sell_cnt for f in flows)
-
-        total_medium_buy_net = MoneyFlowAggregation._sum_opt(f.medium_buy_net for f in flows)
-        total_medium_sell_net = MoneyFlowAggregation._sum_opt(f.medium_sell_net for f in flows)
-        total_medium_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_buy_cnt for f in flows)
-        total_medium_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_sell_cnt for f in flows)
-
-        total_small_buy_net = MoneyFlowAggregation._sum_opt(f.small_buy_net for f in flows)
-        total_small_sell_net = MoneyFlowAggregation._sum_opt(f.small_sell_net for f in flows)
-        total_small_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.small_buy_cnt for f in flows)
-        total_small_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.small_sell_cnt for f in flows)
+        total_small_buy_net = MoneyFlowAggregation._sum_opt(f.small_buy_net for f in money_flows)
+        total_small_sell_net = MoneyFlowAggregation._sum_opt(f.small_sell_net for f in money_flows)
+        total_small_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.small_buy_cnt for f in money_flows)
+        total_small_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.small_sell_cnt for f in money_flows)
 
         return MoneyFlowAggregation(
-            code=first.code,
-            type=mf_type,
-            start_date=first.time.date(),
-            end_date=last.time.date(),
-            trading_days=len(flows),
+            code=code, 
+            type=(AggregationType.STOCK if code[0].isdigit() else AggregationType.SECTOR),
+            start_date=start_date,
+            end_date=end_date,
+            trading_days=trading_days,
             main_net=total_main_net,
             main_cnt=total_main_cnt,
             huge_buy_net=total_huge_buy_net,
@@ -131,6 +122,73 @@ class MoneyFlowAggregation:
             small_sell_cnt=total_small_sell_cnt,
             accumulative=accumulative,
         )
+
+    # @staticmethod
+    # def start_with_money_flows(*flows: MoneyFlow, accumulative: bool = False) -> "MoneyFlowAggregation":
+    #     """
+    #         基于多条资金流向数据构造聚合实例，将所有 flow 各项值直接相加后返回
+    #     """
+
+    #     if not flows:
+    #         raise ValueError('至少需要一条 MoneyFlow 数据')
+
+    #     first = flows[0]
+    #     last = flows[-1]
+    #     mf_type = (
+    #         AggregationType.STOCK
+    #         if first.code and first.code[0].isdigit()
+    #         else AggregationType.SECTOR
+    #     )
+
+    #     # 直接累加所有 flow 的各项值
+    #     total_main_net = sum(f.main_net for f in flows)
+    #     total_main_cnt = sum(f.main_cnt for f in flows)
+    #     total_huge_buy_net = MoneyFlowAggregation._sum_opt(f.huge_buy_net for f in flows)
+    #     total_huge_sell_net = MoneyFlowAggregation._sum_opt(f.huge_sell_net for f in flows)
+    #     total_huge_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_buy_cnt for f in flows)
+    #     total_huge_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.huge_sell_cnt for f in flows)
+
+    #     total_large_buy_net = MoneyFlowAggregation._sum_opt(f.large_buy_net for f in flows)
+    #     total_large_sell_net = MoneyFlowAggregation._sum_opt(f.large_sell_net for f in flows)
+    #     total_large_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.large_buy_cnt for f in flows)
+    #     total_large_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.large_sell_cnt for f in flows)
+
+    #     total_medium_buy_net = MoneyFlowAggregation._sum_opt(f.medium_buy_net for f in flows)
+    #     total_medium_sell_net = MoneyFlowAggregation._sum_opt(f.medium_sell_net for f in flows)
+    #     total_medium_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_buy_cnt for f in flows)
+    #     total_medium_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.medium_sell_cnt for f in flows)
+
+    #     total_small_buy_net = MoneyFlowAggregation._sum_opt(f.small_buy_net for f in flows)
+    #     total_small_sell_net = MoneyFlowAggregation._sum_opt(f.small_sell_net for f in flows)
+    #     total_small_buy_cnt = MoneyFlowAggregation._sum_opt_int(f.small_buy_cnt for f in flows)
+    #     total_small_sell_cnt = MoneyFlowAggregation._sum_opt_int(f.small_sell_cnt for f in flows)
+
+    #     return MoneyFlowAggregation(
+    #         code=first.code,
+    #         type=mf_type,
+    #         start_date=first.time.date(),
+    #         end_date=last.time.date(),
+    #         trading_days=len(flows),
+    #         main_net=total_main_net,
+    #         main_cnt=total_main_cnt,
+    #         huge_buy_net=total_huge_buy_net,
+    #         huge_sell_net=total_huge_sell_net,
+    #         huge_buy_cnt=total_huge_buy_cnt,
+    #         huge_sell_cnt=total_huge_sell_cnt,
+    #         large_buy_net=total_large_buy_net,
+    #         large_sell_net=total_large_sell_net,
+    #         large_buy_cnt=total_large_buy_cnt,
+    #         large_sell_cnt=total_large_sell_cnt,
+    #         medium_buy_net=total_medium_buy_net,
+    #         medium_sell_net=total_medium_sell_net,
+    #         medium_buy_cnt=total_medium_buy_cnt,
+    #         medium_sell_cnt=total_medium_sell_cnt,
+    #         small_buy_net=total_small_buy_net,
+    #         small_sell_net=total_small_sell_net,
+    #         small_buy_cnt=total_small_buy_cnt,
+    #         small_sell_cnt=total_small_sell_cnt,
+    #         accumulative=accumulative,
+    #     )
     
     @staticmethod
     def sector_aggregation_from_members(code: str, name: str, *members: "MoneyFlowAggregation") -> "MoneyFlowAggregation":
