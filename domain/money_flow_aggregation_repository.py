@@ -19,9 +19,7 @@ class MoneyFlowAggregationRepository:
 
     def __init__(self):
         self._accumulation_cache: Dict[str, List[MoneyFlowAggregation]] = {}
-        self._sliding_cache: Dict[str, List[MoneyFlowAggregation]] = {}
         self._accumulation_lock = threading.RLock()
-        self._sliding_lock = threading.RLock()
 
     def save(self, *aggs: MoneyFlowAggregation) -> None:
         if not aggs:
@@ -60,8 +58,8 @@ class MoneyFlowAggregationRepository:
     def clear_cache(self) -> None:
         with self._accumulation_lock:
             self._accumulation_cache.clear()
-        with self._sliding_lock:
-            self._sliding_cache.clear()
+        # with self._sliding_lock:
+        #     self._sliding_cache.clear()
 
     def _upsert_params(self, agg: MoneyFlowAggregation, now: str) -> tuple:
         return (

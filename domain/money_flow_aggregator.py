@@ -40,8 +40,8 @@ class MoneyFlowAggregator:
         sector_calc_pool: ThreadPoolExecutor,
     ):
         self._stock_repo = stock_repo
-        self._money_flow_repo = money_flow_repo
         self._sector_repo = sector_repo
+        self._money_flow_repo = money_flow_repo
         self._money_flow_agg_repo = agg_repo
         self._default_pool = default_pool
         self._sector_aggr_pool = sector_aggr_pool
@@ -89,6 +89,7 @@ class MoneyFlowAggregator:
             logger.info("开始计算板块累计净流入...")
             self._aggregate_sectors(sectors)
 
+        self._money_flow_repo.clear_cache()
         self._money_flow_agg_repo.clear_cache()
         logger.info("资金流聚合完成")
 

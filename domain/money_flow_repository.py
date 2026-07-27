@@ -302,3 +302,6 @@ class MoneyFlowRepository:
             small_sell_cnt=row["small_sell_cnt"],
             small_sell_net=row["small_sell_net"],
         )
+
+    def clear_cache(self):
+        self._find_by_code_cache.clear()
