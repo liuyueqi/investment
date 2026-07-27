@@ -74,7 +74,7 @@ class SectorRepository:
             try:
                 local_map = fut.result()
             except Exception as e:
-                logger.error(f"线程处理异常: {e}")
+                logger.error("线程处理异常", e)
                 continue
 
             with self._lock:

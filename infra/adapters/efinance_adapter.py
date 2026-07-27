@@ -38,7 +38,7 @@ class EfinanceAdapter(StockDataAdapter):
                     stock_map[code] = Stock(code=code, name=name, market=market)
                     
             except Exception as e:
-                logger.error(f"获取指数 {idx} 成分股异常: {e}")
+                logger.error(f"获取指数 {idx} 成分股异常", e)
                 continue
         
         return list(stock_map.values())

@@ -13,7 +13,7 @@ start_date ~ end_date 表示该累计值覆盖的时间范围。
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from domain.money_flow import MoneyFlow
 
@@ -72,7 +72,7 @@ class MoneyFlowAggregation:
         end_date: date, 
         trading_days: int, 
         accumulative: bool, 
-        *money_flows: MoneyFlow
+        money_flows: List[MoneyFlow]
     ):
         total_main_net = sum(f.main_net for f in money_flows)
         total_main_cnt = sum(f.main_cnt for f in money_flows)

@@ -194,7 +194,7 @@ class MoneyFlowAggregator:
                         end_date=flow.time.date(),
                         trading_days=1,
                         accumulative=True,
-                        *flow
+                        money_flows=[flow]
                     )
             new_aggs.append(new_agg)
 
@@ -271,7 +271,7 @@ class MoneyFlowAggregator:
                 end_date=slide_flows[-1].time.date(),
                 trading_days=len(slide_flows),
                 accumulative=False,
-                *slide_flows
+                money_flows=slide_flows
             )
             new_aggs.append(agg)
 
@@ -352,6 +352,7 @@ class MoneyFlowAggregator:
 
         # 查找已有板块累计记录
         existing = self._money_flow_agg_repo.find_longest_accumulation(sector.code)
+        logger.info(f"existing: {existing}")
         if existing:
             if existing.end_date >= date.today():
                 logger.info(f"板块 {sector} 的资金总量已统计到今天。")
@@ -359,6 +360,7 @@ class MoneyFlowAggregator:
             # 资金总量关注end_date，从次日开始读取flow
             since = existing.end_date + timedelta(days=1)
         else:
+            
             since = None
 
         logger.info(f"将从 {since if since else '最早'} 开始聚合板块 {sector} 的资金总量")
@@ -471,13 +473,13 @@ class MoneyFlowAggregator:
         for i, money_flow_date in enumerate(money_flow_dates):
 
             # 跳过已有记录
-            if latest_date and latest_date >= money_flow_date:
+            if latest_date and latest_date >= money_flow_date.date(): #type: ignore
                 continue
 
             if i + window > date_count:
                 break
 
-            if len(new_aggs) > 0:
+            if len(new_aggs) == 0:
                 logger.info(f"将从 {money_flow_date} 开始聚合板块 {sector} 的 {window}日 净流入")
 
             window_dates = money_flow_dates[i : i + window]
@@ -491,7 +493,7 @@ class MoneyFlowAggregator:
                 end_date=window_dates[-1],
                 trading_days=window, 
                 accumulative=False, 
-                *window_flows
+                money_flows=window_flows
             )
             new_aggs.append(new_agg)
 

@@ -60,7 +60,7 @@ class Downloader:
                         f"{member_count} 只成分股"
                     )
         except ValueError as e:
-            logger.error(f"下载板块数据失败: {e}")
+            logger.error("下载板块数据失败", e)
 
     def _download_money_flows(self, stock_codes: Optional[List[str]] = None) -> None:
         """下载资金流向数据到数据库"""

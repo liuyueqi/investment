@@ -128,7 +128,7 @@ class TushareAdapter(StockDataAdapter):
                 money_flows.append(money_flow)
             return money_flows
         except Exception as e:
-            logger.error(f"获取股票 {code} 资金流向失败: {e}")
+            logger.error(f"获取股票 {code} 资金流向失败", e)
             return []
 
     # ========== 辅助方法 ==========
