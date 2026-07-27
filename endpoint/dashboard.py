@@ -8,6 +8,8 @@ Streamlit 数据看板：展示个股/板块的 accumulation 走势图
 
 import subprocess
 import sys
+import time
+from pathlib import Path
 import streamlit as st
 import plotly.graph_objects as go
 from datetime import date, timedelta
@@ -17,20 +19,115 @@ from infra.container import container
 from infra.log import logger
 from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_STREAMLIT_LOG = _PROJECT_ROOT / "logs" / "streamlit.log"
+
 
 class Dashboard:
     """Streamlit 数据看板，封装 UI 逻辑并通过 launch() 启动"""
 
+    _process: Optional[subprocess.Popen] = None
+
+    @staticmethod
+    def _resolve_python() -> str:
+        """优先使用项目虚拟环境中的 Python（依赖安装在此）"""
+        candidates = [
+            _PROJECT_ROOT / ".venv" / "bin" / "python",
+            _PROJECT_ROOT / ".venv" / "Scripts" / "python.exe",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return sys.executable
+
+    @staticmethod
+    def _ensure_streamlit(python: str) -> bool:
+        """检查目标 Python 是否已安装 streamlit"""
+        result = subprocess.run(
+            [python, "-m", "streamlit", "--version"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True
+
+        print("\n❌ 启动失败：当前 Python 未安装 streamlit")
+        print(f"   Python: {python}")
+        if result.stderr.strip():
+            print(f"   错误: {result.stderr.strip()}")
+        print("\n请使用项目虚拟环境运行控制台，例如：")
+        print("   .venv/bin/python main.py")
+        return False
+
+    @staticmethod
+    def _read_local_url(since_marker: str) -> Optional[str]:
+        """从日志中读取本次启动后的 Local URL"""
+        if not _STREAMLIT_LOG.exists():
+            return None
+
+        text = _STREAMLIT_LOG.read_text(encoding="utf-8")
+        if since_marker not in text:
+            return None
+
+        tail = text.split(since_marker, 1)[1]
+        for line in reversed(tail.splitlines()):
+            if "Local URL:" in line:
+                return line.split("Local URL:", 1)[1].strip()
+        return None
+
     @staticmethod
     def launch() -> None:
         """启动 Streamlit 看板子进程"""
+        if Dashboard._process is not None and Dashboard._process.poll() is None:
+            print("\n数据看板已在运行中")
+            print("请在浏览器中访问: http://localhost:8501")
+            return
+
+        python = Dashboard._resolve_python()
+        if not Dashboard._ensure_streamlit(python):
+            return
+
         print("\n正在启动数据看板...")
-        print("请在浏览器中访问: http://localhost:8501")
-        subprocess.Popen(
-            [sys.executable, "-m", "streamlit", "run", __file__],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        _STREAMLIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        launch_marker = f"--- launch at {time.strftime('%Y-%m-%d %H:%M:%S')} ---"
+        log_file = _STREAMLIT_LOG.open("a", encoding="utf-8")
+        log_file.write(f"\n{launch_marker}\n")
+        log_file.flush()
+
+        # 必须持有 Popen 引用，否则 Python 3.12+ 会在 GC 时发出 ResourceWarning
+        Dashboard._process = subprocess.Popen(
+            [
+                python, "-m", "streamlit", "run", __file__,
+                "--server.headless", "true",
+                "--server.port", "8501",
+            ],
+            cwd=str(_PROJECT_ROOT),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
         )
+        log_file.close()
+
+        # 等待 Streamlit 完成启动；若进程已退出则提示查看日志
+        local_url = None
+        for _ in range(20):
+            if Dashboard._process.poll() is not None:
+                print(f"\n❌ 看板启动失败（退出码 {Dashboard._process.returncode}）")
+                print(f"   详细日志: {_STREAMLIT_LOG}")
+                Dashboard._process = None
+                return
+
+            local_url = Dashboard._read_local_url(launch_marker)
+            if local_url:
+                break
+            time.sleep(0.5)
+
+        if local_url:
+            print(f"请在浏览器中访问: {local_url}")
+        else:
+            print("请在浏览器中访问: http://localhost:8501")
+            print(f"若仍无法访问，请查看日志: {_STREAMLIT_LOG}")
 
     @staticmethod
     def _render() -> None:
