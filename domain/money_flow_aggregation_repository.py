@@ -177,6 +177,29 @@ class MoneyFlowAggregationRepository:
             result[td] = self._row_to_agg(row)
         return result
 
+    def find_by_trading_days(
+            self,
+            code: str,
+            trading_days: int,
+            since: Optional[date] = None,
+    ) -> List[MoneyFlowAggregation]:
+        """查询指定 code 在指定 trading_days 窗口下的滑动窗口记录"""
+        sql = """SELECT * FROM money_flow_aggregation
+                    WHERE code = ?
+                    AND trading_days = ?
+                    AND is_accumulative = 0 """
+        params: List = [code, trading_days]
+
+        if since:
+            sql = sql + """ AND start_date >= ? """
+            params.append(since.isoformat())
+
+        sql = sql + """ ORDER BY start_date """
+
+        with get_db() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return self._rows_to_aggs(rows)
+
     def _rows_to_aggs(self, rows) -> List[MoneyFlowAggregation]:
         result: List[MoneyFlowAggregation] = []
         for row in rows:

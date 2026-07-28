@@ -29,6 +29,7 @@ class Console:
                 cmd = parts[0]
 
                 if cmd in ("quit", "exit"):
+                    Dashboard.stop()
                     print("再见！")
                     break
                 elif cmd in ("help"):

@@ -9,6 +9,7 @@ Streamlit 数据看板：展示个股/板块的 accumulation 走势图
 import subprocess
 import sys
 import time
+import webbrowser
 from pathlib import Path
 import streamlit as st
 import plotly.graph_objects as go
@@ -125,9 +126,22 @@ class Dashboard:
 
         if local_url:
             print(f"请在浏览器中访问: {local_url}")
+            webbrowser.open(local_url)
         else:
             print("请在浏览器中访问: http://localhost:8501")
             print(f"若仍无法访问，请查看日志: {_STREAMLIT_LOG}")
+
+    @staticmethod
+    def stop() -> None:
+        """停止 Streamlit 看板子进程"""
+        if Dashboard._process is not None:
+            Dashboard._process.terminate()
+            try:
+                Dashboard._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                Dashboard._process.kill()
+                Dashboard._process.wait()
+        Dashboard._process = None
 
     @staticmethod
     def _render() -> None:
@@ -252,9 +266,7 @@ class Dashboard:
 
                 for tab, window in zip(tabs, windows):
                     with tab:
-                        sliding = _agg_repo.find_by_trading_days(
-                            selected_code, window, since=None, force=True,
-                        )
+                        sliding = _agg_repo.find_by_trading_days(selected_code, window)
                         if sliding:
                             sliding.sort(key=lambda a: a.start_date)
                             dates = [a.start_date for a in sliding]
