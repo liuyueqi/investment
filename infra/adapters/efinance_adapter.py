@@ -1,15 +1,12 @@
 import efinance as ef
 from datetime import date, datetime
 from typing import List, Dict, Optional
-import pandas as pd
 
 from domain.stock import Stock
-from domain.money_flow import MoneyFlow
-from domain.daily_quote import DailyQuote
-from .stock_data_adapter import StockDataAdapter
+from .external_data_adapter import ExternalDataAdapter
 from infra.log import logger
 
-class EfinanceAdapter(StockDataAdapter):
+class EfinanceAdapter(ExternalDataAdapter):
     """基于 efinance 的数据适配器"""
     
     def get_all_stock_info(self) -> List[Stock]:

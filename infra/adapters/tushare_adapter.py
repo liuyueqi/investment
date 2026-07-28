@@ -5,10 +5,10 @@ import tushare as ts
 from datetime import date, datetime
 from typing import List, Optional
 from domain.money_flow import MoneyFlow
-from .stock_data_adapter import StockDataAdapter
+from .external_data_adapter import ExternalDataAdapter
 from infra.log import logger
 
-class TushareAdapter(StockDataAdapter):
+class TushareAdapter(ExternalDataAdapter):
     """基于 Tushare Pro 的数据适配器"""
 
     _TOKEN_FILE_ENV = 'TUSHARE_TOKEN_FILE'

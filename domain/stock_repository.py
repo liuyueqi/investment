@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from domain.stock import Stock
-from infra.adapters.stock_data_adapter import StockDataAdapter
+from infra.adapters.external_data_adapter import ExternalDataAdapter
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -13,7 +13,7 @@ class StockRepository:
 
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
     
-    def __init__(self, adapter: StockDataAdapter):
+    def __init__(self, adapter: ExternalDataAdapter):
         self._adapter = adapter
 
     def refresh(self, force: bool = False) -> None:

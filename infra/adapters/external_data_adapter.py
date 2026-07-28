@@ -3,15 +3,19 @@ from datetime import date, datetime
 from typing import List, Dict, Optional
 
 from domain.stock import Stock
+from domain.etf import ETF
 from domain.money_flow import MoneyFlow
 from domain.daily_quote import DailyQuote
 
-class StockDataAdapter(ABC):
-    """股票数据提供者接口（所有适配器必须实现）"""
+class ExternalDataAdapter(ABC):
+    """外部数据提供者接口（所有适配器必须实现）"""
     
     def get_all_stock_info(self) -> List[Stock]:
         """获取全市场股票信息列表"""
         raise NotImplementedError("get_all_stock_info 方法未实现")
+
+    def get_all_etf_info(self) -> List[ETF]:
+        raise NotImplementedError("get_all_etf_info 方法未实现")
     
     def get_stock_sectors(self, stock_code: str) -> List[Dict[str, str]]:
         """获取股票所属板块列表"""
