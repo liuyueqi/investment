@@ -212,8 +212,9 @@ class MoneyFlowAggregationRepository:
         if row is None:
             return None
 
-        def _opt_date(val):
-            return datetime.strptime(val, "%Y-%m-%d").date()
+        def _opt_date(val) -> date:
+            # 兼容 '2026-07-22' 与 '2026-07-22T00:00:00'（板块 sliding 历史数据）
+            return datetime.strptime(str(val)[:10], "%Y-%m-%d").date()
 
         return MoneyFlowAggregation(
             code=row["code"],

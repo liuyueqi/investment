@@ -17,14 +17,15 @@ from infra.log import logger
 
 
 class MoneyFlowAggregator:
-    """资金流聚合器
+    """
+        资金流聚合器
 
-    从 money_flows 表读取原始日级资金流数据，计算并保存到 money_flow_aggregation 表。
-    包含 4 种聚合：
-      1. 个股从最早日期到每一天的累计净流入
-      2. 个股的 3/5/10/20 日净流入
-      3. 板块从最早日期到每一天的累计净流入
-      4. 板块的 3/5/10/20 日净流入
+        从 money_flows 表读取原始日级资金流数据，计算并保存到 money_flow_aggregation 表。
+        包含 4 种聚合：
+        1. 个股从最早日期到每一天的累计净流入
+        2. 个股的 3/5/10/20 日净流入
+        3. 板块从最早日期到每一天的累计净流入
+        4. 板块的 3/5/10/20 日净流入
     """
 
     _TRADING_DAYS = [3, 5, 10, 20]  # 需要计算的滑动窗口
@@ -352,7 +353,6 @@ class MoneyFlowAggregator:
 
         # 查找已有板块累计记录
         existing = self._money_flow_agg_repo.find_longest_accumulation(sector.code)
-        logger.info(f"existing: {existing}")
         if existing:
             if existing.end_date >= date.today():
                 logger.info(f"板块 {sector} 的资金总量已统计到今天。")
@@ -488,11 +488,11 @@ class MoneyFlowAggregator:
                 window_flows.extend(member_flows_of_date[window_date])
 
             new_agg = MoneyFlowAggregation.create(
-                code=sector.code, 
-                start_date=window_dates[0], 
-                end_date=window_dates[-1],
-                trading_days=window, 
-                accumulative=False, 
+                code=sector.code,
+                start_date=window_dates[0].date() if isinstance(window_dates[0], datetime) else window_dates[0],
+                end_date=window_dates[-1].date() if isinstance(window_dates[-1], datetime) else window_dates[-1],
+                trading_days=window,
+                accumulative=False,
                 money_flows=window_flows
             )
             new_aggs.append(new_agg)
