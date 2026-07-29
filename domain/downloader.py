@@ -3,6 +3,9 @@
 import time
 from typing import List, Optional
 
+from domain.money_flow_repository import MoneyFlowRepository
+from domain.sector_repository import SectorRepository
+from domain.stock_repository import StockRepository
 from infra.database.schema import init_db
 from infra.log import logger
 
@@ -12,7 +15,11 @@ SEPARATOR = "=" * 50
 class Downloader:
     """数据下载器，通过 IoC 容器获取 Repository 执行数据下载"""
 
-    def __init__(self, stock_repo, sector_repo, money_flow_repo):
+    def __init__(self, 
+            stock_repo: StockRepository, 
+            sector_repo: SectorRepository, 
+            money_flow_repo: MoneyFlowRepository
+    ):
         self._stock_repo = stock_repo
         self._sector_repo = sector_repo
         self._money_flow_repo = money_flow_repo
@@ -51,14 +58,6 @@ class Downloader:
             self._sector_repo.refresh(stock_codes, force=True)
             sectors = self._sector_repo.find_all()
             logger.info(f"共下载 {len(sectors)} 个板块")
-            if sectors:
-                logger.info("前5个板块：")
-                for sector in sectors[:5]:
-                    member_count = len(sector.members)
-                    logger.info(
-                        f"  {sector.code} - {sector.name} ({sector.type.value}) - "
-                        f"{member_count} 只成分股"
-                    )
         except ValueError as e:
             logger.error("下载板块数据失败", e)
 

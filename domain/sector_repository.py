@@ -1,10 +1,12 @@
 import time
 import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional
 
 from domain.sector import Sector, SectorType
+from domain.sector_change_log import SectorChangeAction, SectorChangeLog
 from infra.adapters.external_data_adapter import ExternalDataAdapter
 from infra.database.connection import get_db
 from infra.log import logger
@@ -113,55 +115,158 @@ class SectorRepository:
             return
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        pending = dict(sectors)
+        change_logs: List[SectorChangeLog] = []
+
         with get_db() as conn:
-            for sector in sectors.values():
-                existing = conn.execute(
-                    """SELECT 1 FROM sectors WHERE code = ?""",
-                    (sector.code,),
-                ).fetchone()
+            db_sectors = self._fetch_sectors_by_codes(conn, list(pending.keys()))
 
-                if existing:
-                    conn.execute(
-                        """UPDATE sectors
-                           SET name = ?, type = ?, updated_at = ?, is_deleted = 0
-                           WHERE code = ?""",
-                        (sector.name, sector.type.value, now, sector.code),
-                    )
-                else:
-                    conn.execute(
-                        """INSERT INTO sectors (code, name, type, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (sector.code, sector.name, sector.type.value, now, now),
-                    )
+            for code, db_sector in db_sectors.items():
+                incoming = pending.get(code)
+                if incoming is None:
+                    continue
+                if db_sector.sign == incoming.sign:
+                    del pending[code]
+                    continue
 
-                for member_code in sector.members:
-                    existing = conn.execute(
-                        """SELECT 1 FROM sector_members
-                           WHERE sector_code = ? AND stock_code = ?""",
-                        (sector.code, member_code),
-                    ).fetchone()
+                incoming.version = db_sector.version + 1
+                change_logs.extend(self._compute_change_logs(db_sector, incoming))
+                self._delete_sector_and_members(conn, code)
 
-                    if existing:
-                        conn.execute(
-                            """UPDATE sector_members
-                               SET is_deleted = 0, updated_at = ?
-                               WHERE sector_code = ? AND stock_code = ?""",
-                            (now, sector.code, member_code),
-                        )
-                    else:
-                        conn.execute(
-                            """INSERT INTO sector_members (sector_code, stock_code, created_at, updated_at)
-                               VALUES (?, ?, ?, ?)""",
-                            (sector.code, member_code, now, now),
-                        )
+            for sector in pending.values():
+                self._insert_sector(conn, sector, now)
 
-        logger.info(f"板块数据已保存到数据库，共 {len(sectors)} 个板块")
+            self._insert_change_logs(conn, change_logs, now)
+
+        logger.info(
+            f"板块数据已保存到数据库，新增/更新 {len(pending)} 个，"
+            f"跳过 {len(sectors) - len(pending)} 个，变更记录 {len(change_logs)} 条"
+        )
+
+    def _fetch_sectors_by_codes(self, conn, codes: List[str]) -> Dict[str, Sector]:
+        if not codes:
+            return {}
+
+        placeholders = ",".join("?" * len(codes))
+        rows = conn.execute(
+            f"""SELECT code, name, type, sign, version
+                FROM sectors
+                WHERE code IN ({placeholders}) AND is_deleted = 0""",
+            codes,
+        ).fetchall()
+        if not rows:
+            return {}
+
+        member_rows = conn.execute(
+            f"""SELECT sector_code, stock_code FROM sector_members
+                WHERE sector_code IN ({placeholders}) AND is_deleted = 0
+                ORDER BY sector_code, stock_code""",
+            codes,
+        ).fetchall()
+        members_by_code: Dict[str, List[str]] = defaultdict(list)
+        for row in member_rows:
+            members_by_code[row["sector_code"]].append(row["stock_code"])
+
+        sectors: Dict[str, Sector] = {}
+        for row in rows:
+            sector = Sector(
+                code=row["code"],
+                name=row["name"],
+                type=SectorType(row["type"]),
+                version=row["version"],
+                members=members_by_code[row["code"]],
+            )
+            sector._sign = row["sign"]
+            sectors[row["code"]] = sector
+        return sectors
+
+    def _compute_change_logs(self, old: Sector, new: Sector) -> List[SectorChangeLog]:
+        logs: List[SectorChangeLog] = []
+        version = new.version
+
+        if old.name != new.name:
+            logs.append(SectorChangeLog(
+                sector_code=new.code,
+                action=SectorChangeAction.MODIFY_NAME,
+                old_value=old.name,
+                new_value=new.name,
+                version=version,
+            ))
+        if old.type != new.type:
+            logs.append(SectorChangeLog(
+                sector_code=new.code,
+                action=SectorChangeAction.MODIFY_TYPE,
+                old_value=old.type.value,
+                new_value=new.type.value,
+                version=version,
+            ))
+
+        old_members = set(old.members)
+        new_members = set(new.members)
+        for stock_code in sorted(new_members - old_members):
+            logs.append(SectorChangeLog(
+                sector_code=new.code,
+                action=SectorChangeAction.ADD_MEMBER,
+                new_value=stock_code,
+                version=version,
+            ))
+        for stock_code in sorted(old_members - new_members):
+            logs.append(SectorChangeLog(
+                sector_code=new.code,
+                action=SectorChangeAction.REMOVE_MEMBER,
+                old_value=stock_code,
+                version=version,
+            ))
+        return logs
+
+    def _delete_sector_and_members(self, conn, code: str) -> None:
+        conn.execute("DELETE FROM sector_members WHERE sector_code = ?", (code,))
+        conn.execute("DELETE FROM sectors WHERE code = ?", (code,))
+
+
+    def _insert_sector(self, conn, sector: Sector, now: str) -> None:
+        conn.execute(
+            """INSERT INTO sectors
+               (code, name, type, sign, version, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                sector.code,
+                sector.name,
+                sector.type.value,
+                sector.sign,
+                sector.version,
+                now,
+                now,
+            ),
+        )
+        for member_code in sector.members:
+            conn.execute(
+                """INSERT INTO sector_members (sector_code, stock_code, created_at, updated_at)
+                   VALUES (?, ?, ?, ?)""",
+                (sector.code, member_code, now, now),
+            )
+
+    def _insert_change_logs(self, conn, logs: List[SectorChangeLog], now: str) -> None:
+        for log in logs:
+            conn.execute(
+                """INSERT INTO sector_change_logs
+                   (sector_code, action, old_value, new_value, version, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    log.sector_code,
+                    log.action.value,
+                    log.old_value,
+                    log.new_value,
+                    log.version,
+                    now,
+                ),
+            )
 
     def find_by_code(self, code: str) -> Optional[Sector]:
         """根据板块代码查询板块信息及成分股"""
         with get_db() as conn:
             row = conn.execute(
-                """SELECT code, name, type
+                """SELECT code, name, type, version
                    FROM sectors
                    WHERE code = ? AND is_deleted = 0""",
                 (code,),
@@ -182,6 +287,7 @@ class SectorRepository:
                 code=row["code"],
                 name=row["name"],
                 type=SectorType(row["type"]),
+                version=row["version"],
                 members=members,
             )
 
@@ -193,7 +299,7 @@ class SectorRepository:
         placeholders = ",".join("?" * len(codes))
         with get_db() as conn:
             rows = conn.execute(
-                f"""SELECT code, name, type
+                f"""SELECT code, name, type, version
                     FROM sectors
                     WHERE code IN ({placeholders}) AND is_deleted = 0
                     ORDER BY code""",
@@ -215,6 +321,7 @@ class SectorRepository:
                     code=row["code"],
                     name=row["name"],
                     type=SectorType(row["type"]),
+                    version=row["version"],
                     members=members,
                 ))
 
@@ -224,7 +331,7 @@ class SectorRepository:
         """获取所有板块信息及成分股"""
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT code, name, type
+                """SELECT code, name, type, version
                    FROM sectors
                    WHERE is_deleted = 0
                    ORDER BY code"""
@@ -245,13 +352,13 @@ class SectorRepository:
                     code=row["code"],
                     name=row["name"],
                     type=SectorType(row["type"]),
+                    version=row["version"],
                     members=members,
                 ))
 
             return sectors
 
-    @staticmethod
-    def _infer_type(name: str) -> SectorType:
+    def _infer_type(self, name: str) -> SectorType:
         """根据板块名称推断板块类型"""
         if '行业' in name or '制造' in name:
             return SectorType.INDUSTRY

@@ -10,7 +10,7 @@ from domain.sector_repository import SectorRepository
 from domain.money_flow_repository import MoneyFlowRepository
 from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
 from domain.money_flow_aggregator import MoneyFlowAggregator
-from downloader import Downloader
+from domain.downloader import Downloader
 
 
 class AppContainer(containers.DeclarativeContainer):

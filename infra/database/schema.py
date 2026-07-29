@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS sectors (
     code        TEXT PRIMARY KEY,        -- 'BK0477'
     name        TEXT NOT NULL,           -- '超级品牌'
     type        TEXT NOT NULL,           -- '行业' / '概念' / '地区' / '风格'
+    sign        TEXT NOT NULL DEFAULT '', -- 成分股集合签名
+    version     INTEGER NOT NULL DEFAULT 0, -- 变更版本
     created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     is_deleted  INTEGER NOT NULL DEFAULT 0
@@ -40,6 +42,19 @@ CREATE TABLE IF NOT EXISTS sector_members (
     PRIMARY KEY (sector_code, stock_code),
     FOREIGN KEY (sector_code) REFERENCES sectors(code),
     FOREIGN KEY (stock_code)  REFERENCES stocks(code)
+);
+"""
+
+CREATE_SECTOR_CHANGE_LOGS_TABLE = """
+CREATE TABLE IF NOT EXISTS sector_change_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    sector_code     TEXT NOT NULL,                   -- 板块代码
+    action          TEXT NOT NULL,                   -- 变更类型: modify_name/modify_type/add_member/remove_member
+    old_value       TEXT NOT NULL DEFAULT '',        -- 变更前值
+    new_value       TEXT NOT NULL DEFAULT '',        -- 变更后值
+    version         INTEGER NOT NULL DEFAULT 0,      -- 变更版本
+    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (sector_code) REFERENCES sectors(code)
 );
 """
 
@@ -154,6 +169,8 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_code ON daily_quotes(code);",
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_date ON daily_quotes(trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_sector_members_stock ON sector_members(stock_code);",
+    "CREATE INDEX IF NOT EXISTS idx_sectors_sign ON sectors(sign);",
+    "CREATE INDEX IF NOT EXISTS idx_sector_change_logs_sector_version ON sector_change_logs(sector_code, version);",
     "CREATE INDEX IF NOT EXISTS idx_money_flow_agg_code_tra ON money_flow_aggregation(code, trading_days, is_accumulative);"
 ]
 
@@ -173,6 +190,7 @@ def init_db() -> None:
         conn.execute(CREATE_STOCKS_TABLE)
         conn.execute(CREATE_SECTORS_TABLE)
         conn.execute(CREATE_SECTOR_MEMBERS_TABLE)
+        conn.execute(CREATE_SECTOR_CHANGE_LOGS_TABLE)
         conn.execute(CREATE_MONEY_FLOWS_TABLE)
         conn.execute(CREATE_DAILY_QUOTES_TABLE)
         conn.execute(CREATE_MONEY_FLOW_AGGREGATION_TABLE)
@@ -182,6 +200,8 @@ def init_db() -> None:
             ("stocks", "is_deleted INTEGER NOT NULL DEFAULT 0"),
             ("sectors", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("sectors", "is_deleted INTEGER NOT NULL DEFAULT 0"),
+            ("sectors", "sign TEXT NOT NULL DEFAULT ''"),
+            ("sectors", "version INTEGER NOT NULL DEFAULT 0"),
             ("sector_members", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("sector_members", "is_deleted INTEGER NOT NULL DEFAULT 0"),
             ("money_flows", "huge_buy_cnt INTEGER"),
