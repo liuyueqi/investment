@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from domain.money_flow import MoneyFlow
 from infra.adapters.efinance_adapter import EfinanceAdapter
 from infra.adapters.tushare_adapter import TushareAdapter
+from infra.config import get_money_flow_earliest_date
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -13,7 +14,6 @@ class MoneyFlowRepository:
     """资金流向数据仓库，管理 money_flows 表"""
 
     _REQUEST_INTERVAL_SECONDS = 0.3      # 每次接口请求间隔（秒）
-    _DEFAULT_START_DAYS = 360            # 默认拉取最近 360 天数据
     _CACHE_TTL_SECONDS = 24 * 60 * 60    # 缓存有效期：1 天
 
     def __init__(
@@ -82,7 +82,7 @@ class MoneyFlowRepository:
             if last_date:
                 start_date = last_date + timedelta(days=1)
             else:
-                start_date = date.today() - timedelta(days=self._DEFAULT_START_DAYS)
+                start_date = get_money_flow_earliest_date()
 
             today = date.today()
             if start_date > today:
