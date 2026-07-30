@@ -29,7 +29,7 @@ class ExternalDataAdapter(ABC):
         self,
         code: Optional[str] = None,
         start_date: Optional[date] = None,
-        end_date: Optional[date] = None
+        end_date: Optional[date] = None,
     ) -> List[MoneyFlow]:
         """获取日级资金流向（已转换为 MoneyFlow 对象）"""
         raise NotImplementedError("get_daily_flow 方法未实现")

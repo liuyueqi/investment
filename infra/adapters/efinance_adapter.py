@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 from domain.stock import Stock
 from .external_data_adapter import ExternalDataAdapter
 from infra.log import logger
+from domain.stock_code import infer_market, normalize_code
 
 class EfinanceAdapter(ExternalDataAdapter):
     """基于 efinance 的数据适配器"""
@@ -26,12 +27,12 @@ class EfinanceAdapter(ExternalDataAdapter):
                 name_col = '股票名称' if '股票名称' in df.columns else '名称'
                 
                 for _, row in df.iterrows():
-                    code = str(row[code_col]).zfill(6)
+                    code = normalize_code(str(row[code_col]))
                     # 如果已经存在，跳过（去重）
                     if code in stock_map:
                         continue
                     name = row[name_col]
-                    market = self._infer_market(code)
+                    market = infer_market(code)
                     stock_map[code] = Stock(code=code, name=name, market=market)
                     
             except Exception as e:
@@ -53,12 +54,3 @@ class EfinanceAdapter(ExternalDataAdapter):
             logger.warning(f"获取 {stock_code} 所属板块失败: {e}")
             return []
     
-    @staticmethod
-    def _infer_market(code: str) -> str:
-        if code.startswith('6'):
-            return 'SH'
-        elif code.startswith(('0', '3')):
-            return 'SZ'
-        elif code.startswith(('8', '4')):
-            return 'BJ'
-        return 'UNKNOWN'

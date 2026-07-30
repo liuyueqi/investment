@@ -7,6 +7,7 @@ from typing import List, Optional
 from domain.money_flow import MoneyFlow
 from .external_data_adapter import ExternalDataAdapter
 from infra.log import logger
+from domain.stock_code import to_ts_code
 
 class TushareAdapter(ExternalDataAdapter):
     """基于 Tushare Pro 的数据适配器"""
@@ -44,7 +45,7 @@ class TushareAdapter(ExternalDataAdapter):
         self,
         code: Optional[str] = None,
         start_date: Optional[date] = None,
-        end_date: Optional[date] = None
+        end_date: Optional[date] = None,
     ) -> List[MoneyFlow]:
         """
             获取个股日级资金流向
@@ -59,7 +60,7 @@ class TushareAdapter(ExternalDataAdapter):
         try:
             params = {}
             if code is not None:
-                params['ts_code'] = self._to_ts_code(code)
+                params['ts_code'] = to_ts_code(code)
             if start_date is not None:
                 params['start_date'] = start_date.strftime('%Y%m%d')
             if end_date is not None:
@@ -130,20 +131,3 @@ class TushareAdapter(ExternalDataAdapter):
         except Exception as e:
             logger.error(f"获取股票 {code} 资金流向失败", e)
             return []
-
-    # ========== 辅助方法 ==========
-
-    @staticmethod
-    def _to_ts_code(code: str) -> str:
-        """
-        将纯数字代码转换为 Tushare 格式
-        e.g. '000001' -> '000001.SZ'
-        """
-        code = code.zfill(6)
-        if code.startswith('6'):
-            return f"{code}.SH"
-        elif code.startswith(('0', '3')):
-            return f"{code}.SZ"
-        elif code.startswith(('8', '4')):
-            return f"{code}.BJ"
-        return code
