@@ -77,6 +77,7 @@ class MoneyFlowRepository:
         for code in stock_codes:
             last_date = last_flow_dates.get(code)
             if self._is_up_to_date(last_date):
+                logger.info(f"股票 {code} 最新数据日期 {last_date} 已同步到最新交易日，跳过")
                 continue
 
             if last_date:
@@ -86,6 +87,7 @@ class MoneyFlowRepository:
 
             today = date.today()
             if start_date > today:
+                logger.warning(f"股票 {code} 最新数据日期 {start_date} 大于今天 {today}，跳过")
                 continue
 
             index += 1

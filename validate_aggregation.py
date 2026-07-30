@@ -2,10 +2,10 @@
 
 检查项：
   1. 个股 accumulation / sliding：与 money_flows 直接计算结果比对
-  2. 板块 accumulation：按「历史快照」模型，end_date 当日已纳入板块的成员 stock accumulation 之和
-  3. 板块 sliding：按记录写入日的成分股快照，对窗口内各交易日 flow 求和（与 incremental 写入时一致）
+  2. 板块 accumulation：按 sector_change_logs 重建的版本快照验证
+  3. 板块 sliding：按聚合记录写入时点对应的板块版本验证
 
-板块成分股有效性暂以 sector_members.created_at 近似（精确验证需成分股变动历史表）。
+板块成分股历史通过 sector_change_logs 回放得到；无变更记录时以当前成分股（version 0）验证。
 
 用法：
   python validate_aggregation.py                  # 检查全部
@@ -26,6 +26,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from infra.database.connection import get_db
 from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
 from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
+from domain.sector_change_log import SectorChangeAction, SectorChangeLog
 
 WINDOWS = (3, 5, 10, 20)
 TOLERANCE = 0.01  # 万元，允许浮点误差
@@ -34,9 +35,9 @@ _agg_repo = MoneyFlowAggregationRepository()
 
 FlowRow = Tuple[date, float, int]  # trade_date, main_net, main_cnt
 AggRow = Tuple[date, date, int, float, int]  # start_date, end_date, trading_days, main_net, main_cnt
-SectorAccRow = Tuple[date, date, int, float, int, date]  # + snapshot_date（记录写入日）
+SectorAccRow = Tuple[date, date, int, float, int, datetime]  # + 聚合记录 created_at
 SectorSlideRow = SectorAccRow
-MemberRecord = Tuple[str, date]  # stock_code, joined_date（以 created_at 日期近似）
+MemberHistory = Dict[int, List[str]]  # version -> members
 
 
 @dataclass
@@ -75,27 +76,17 @@ def _agg_to_row(agg: MoneyFlowAggregation) -> AggRow:
 
 
 def _sector_acc_to_row(row: dict, agg: MoneyFlowAggregation) -> SectorAccRow:
-    snapshot = _parse_member_joined_at(row["created_at"])
-    return (*_agg_to_row(agg), snapshot)
+    created_at = _parse_datetime(row["created_at"])
+    return (*_agg_to_row(agg), created_at)
 
 
 def _sector_slide_to_row(row: dict, agg: MoneyFlowAggregation) -> SectorSlideRow:
-    snapshot = _parse_member_joined_at(row["created_at"])
-    return (*_agg_to_row(agg), snapshot)
+    created_at = _parse_datetime(row["created_at"])
+    return (*_agg_to_row(agg), created_at)
 
 
-def _parse_member_joined_at(value: str) -> date:
-    return datetime.strptime(value[:10], "%Y-%m-%d").date()
-
-
-def _member_active_on(joined_date: date, on_date: date) -> bool:
-    """成分股在 on_date 是否已纳入板块（以 created_at 日期近似）"""
-    return joined_date <= on_date
-
-
-def _members_at_snapshot(member_records: Sequence[MemberRecord], snapshot_date: date) -> List[str]:
-    """记录写入日已知已纳入板块的成员（用于 accumulation 历史快照验证）"""
-    return [code for code, joined in member_records if _member_active_on(joined, snapshot_date)]
+def _parse_datetime(value: str) -> datetime:
+    return datetime.strptime(value[:19], "%Y-%m-%d %H:%M:%S")
 
 
 def _merge_member_agg(existing: AggRow, other: AggRow) -> AggRow:
@@ -120,25 +111,119 @@ def _load_stocks(conn) -> List[str]:
     return [row["code"] for row in rows]
 
 
-def _load_sectors(conn) -> Dict[str, List[MemberRecord]]:
-    """加载板块及成分股（含 created_at 日期，用于历史快照验证）"""
-    sectors: Dict[str, List[MemberRecord]] = {}
+def _load_sectors(conn) -> Dict[str, Tuple[List[str], int]]:
+    """加载板块当前成分股及 version"""
+    sectors: Dict[str, Tuple[List[str], int]] = {}
     sector_rows = conn.execute(
-        "SELECT code FROM sectors WHERE is_deleted = 0 ORDER BY code"
+        "SELECT code, version FROM sectors WHERE is_deleted = 0 ORDER BY code"
     ).fetchall()
+    if not sector_rows:
+        return sectors
+
+    codes = [row["code"] for row in sector_rows]
+    placeholders = ",".join("?" * len(codes))
+    member_rows = conn.execute(
+        f"""SELECT sector_code, stock_code FROM sector_members
+            WHERE sector_code IN ({placeholders}) AND is_deleted = 0
+            ORDER BY sector_code, stock_code""",
+        codes,
+    ).fetchall()
+    members_by_code: Dict[str, List[str]] = defaultdict(list)
+    for row in member_rows:
+        members_by_code[row["sector_code"]].append(row["stock_code"])
+
     for row in sector_rows:
         code = row["code"]
-        members = conn.execute(
-            """SELECT stock_code, created_at FROM sector_members
-               WHERE sector_code = ? AND is_deleted = 0
-               ORDER BY stock_code""",
-            (code,),
-        ).fetchall()
-        sectors[code] = [
-            (m["stock_code"], _parse_member_joined_at(m["created_at"]))
-            for m in members
-        ]
+        sectors[code] = (members_by_code.get(code, []), row["version"])
     return sectors
+
+
+def _load_sector_change_logs(conn, codes: Iterable[str]) -> Dict[str, List[SectorChangeLog]]:
+    code_list = list(codes)
+    if not code_list:
+        return {}
+
+    placeholders = ",".join("?" * len(code_list))
+    rows = conn.execute(
+        f"""SELECT sector_code, action, old_value, new_value, version, created_at
+            FROM sector_change_logs
+            WHERE sector_code IN ({placeholders})
+            ORDER BY sector_code, version, id""",
+        code_list,
+    ).fetchall()
+
+    logs: Dict[str, List[SectorChangeLog]] = defaultdict(list)
+    for row in rows:
+        logs[row["sector_code"]].append(SectorChangeLog(
+            sector_code=row["sector_code"],
+            action=SectorChangeAction(row["action"]),
+            old_value=row["old_value"],
+            new_value=row["new_value"],
+            version=row["version"],
+            created_at=_parse_datetime(row["created_at"]),
+        ))
+    return logs
+
+
+def _build_member_history(
+    current_members: Sequence[str],
+    current_version: int,
+    change_logs: Sequence[SectorChangeLog],
+) -> MemberHistory:
+    """根据 change logs 回放，得到各 version 对应的成分股集合"""
+    if not change_logs:
+        return {current_version: sorted(current_members)}
+
+    logs_by_version: Dict[int, List[SectorChangeLog]] = defaultdict(list)
+    for log in change_logs:
+        logs_by_version[log.version].append(log)
+
+    history: MemberHistory = {current_version: sorted(current_members)}
+    members = set(current_members)
+    for version in sorted(logs_by_version.keys(), reverse=True):
+        for log in logs_by_version[version]:
+            if log.action == SectorChangeAction.ADD_MEMBER:
+                members.discard(log.new_value)
+            elif log.action == SectorChangeAction.REMOVE_MEMBER:
+                members.add(log.old_value)
+        history[version - 1] = sorted(members)
+    return history
+
+
+def _version_at_time(
+    agg_created_at: datetime,
+    change_logs: Sequence[SectorChangeLog],
+) -> int:
+    """根据聚合记录写入时间，确定当时有效的板块 version"""
+    version = 0
+    version_times: Dict[int, datetime] = {}
+    for log in change_logs:
+        if log.created_at is None:
+            continue
+        prev = version_times.get(log.version)
+        if prev is None or log.created_at < prev:
+            version_times[log.version] = log.created_at
+
+    for ver in sorted(version_times):
+        if version_times[ver] <= agg_created_at:
+            version = ver
+    return version
+
+
+def _members_at_version(history: MemberHistory, version: int) -> List[str]:
+    if version in history:
+        return history[version]
+    lower = [v for v in history if v <= version]
+    if lower:
+        return history[max(lower)]
+    return history[min(history)]
+
+
+def _all_members_from_history(history: MemberHistory) -> set[str]:
+    members: set[str] = set()
+    for codes in history.values():
+        members.update(codes)
+    return members
 
 
 def _load_flows(conn, codes: Optional[Iterable[str]] = None) -> Dict[str, List[FlowRow]]:
@@ -254,14 +339,16 @@ def _expected_stock_sliding(flows: Sequence[FlowRow], window: int) -> List[AggRo
 
 
 def _expected_sector_accumulation_row(
-    member_records: Sequence[MemberRecord],
+    member_history: MemberHistory,
+    change_logs: Sequence[SectorChangeLog],
     stock_accumulations: Dict[str, List[AggRow]],
     end_date: date,
-    snapshot_date: date,
+    agg_created_at: datetime,
 ) -> Optional[AggRow]:
-    """按记录写入日的成分股快照，计算某日板块 accumulation 期望值"""
+    """按 change logs 确定的版本快照，计算某日板块 accumulation 期望值"""
+    version = _version_at_time(agg_created_at, change_logs)
     member_aggs: List[AggRow] = []
-    for stock_code in _members_at_snapshot(member_records, snapshot_date):
+    for stock_code in _members_at_version(member_history, version):
         for agg in stock_accumulations.get(stock_code, []):
             if agg[1] == end_date:
                 member_aggs.append(agg)
@@ -278,21 +365,23 @@ def _expected_sector_accumulation_row(
 
 def _validate_sector_accumulation(
     code: str,
-    member_records: Sequence[MemberRecord],
+    member_history: MemberHistory,
+    change_logs: Sequence[SectorChangeLog],
     stock_accumulations: Dict[str, List[AggRow]],
     actual_rows: Sequence[SectorAccRow],
     report: ValidationReport,
 ) -> None:
-    """逐条验证板块 accumulation（按每条记录的 created_at 确定有效成分股）"""
+    """逐条验证板块 accumulation（按 change logs 确定写入时有效成分股）"""
     for row in actual_rows:
-        start_date, end_date, trading_days, main_net, main_cnt, snapshot_date = row
+        start_date, end_date, trading_days, main_net, main_cnt, agg_created_at = row
+        version = _version_at_time(agg_created_at, change_logs)
         expected = _expected_sector_accumulation_row(
-            member_records, stock_accumulations, end_date, snapshot_date,
+            member_history, change_logs, stock_accumulations, end_date, agg_created_at,
         )
         if expected is None:
             report.add(Issue(
                 "sector", code, "accumulation",
-                f"写入日 {snapshot_date} 无有效成分股数据 (end={end_date})",
+                f"version {version} 无有效成分股数据 (end={end_date})",
             ))
             continue
 
@@ -305,24 +394,26 @@ def _validate_sector_accumulation(
             report.add(Issue(
                 "sector", code, "accumulation",
                 f"main_net 错误 {main_net:.4f} != {expected[3]:.4f} "
-                f"(end={end_date}, snapshot={snapshot_date})",
+                f"(end={end_date}, version={version})",
             ))
         if main_cnt != expected[4]:
             report.add(Issue(
                 "sector", code, "accumulation",
                 f"main_cnt 错误 {main_cnt} != {expected[4]} "
-                f"(end={end_date}, snapshot={snapshot_date})",
+                f"(end={end_date}, version={version})",
             ))
 
 
 def _expected_sector_sliding(
-    member_records: Sequence[MemberRecord],
+    member_history: MemberHistory,
+    change_logs: Sequence[SectorChangeLog],
     flows_by_code: Dict[str, List[FlowRow]],
     window: int,
-    snapshot_date: date,
+    agg_created_at: datetime,
 ) -> List[AggRow]:
-    """按写入日成分股快照，在交易日并集上滑动（与 aggregator 写入时成员集合一致）"""
-    member_codes = _members_at_snapshot(member_records, snapshot_date)
+    """按 change logs 确定的版本快照，在交易日并集上滑动"""
+    version = _version_at_time(agg_created_at, change_logs)
+    member_codes = _members_at_version(member_history, version)
     flow_lookup: Dict[Tuple[str, date], FlowRow] = {}
     trading_dates: set[date] = set()
     for stock_code in member_codes:
@@ -357,23 +448,25 @@ def _expected_sector_sliding(
 
 def _validate_sector_sliding(
     code: str,
-    member_records: Sequence[MemberRecord],
+    member_history: MemberHistory,
+    change_logs: Sequence[SectorChangeLog],
     flows_by_code: Dict[str, List[FlowRow]],
     actual_rows: Sequence[SectorSlideRow],
     window: int,
     report: ValidationReport,
 ) -> None:
-    """逐条验证板块 sliding（按每条记录的 created_at 确定有效成分股）"""
+    """逐条验证板块 sliding（按 change logs 确定写入时有效成分股）"""
     label = f"sliding({window}日)"
-    by_snapshot: Dict[date, List[SectorSlideRow]] = defaultdict(list)
+    by_created_at: Dict[datetime, List[SectorSlideRow]] = defaultdict(list)
     for row in actual_rows:
-        by_snapshot[row[5]].append(row)
+        by_created_at[row[5]].append(row)
 
-    for snapshot_date, rows in by_snapshot.items():
+    for agg_created_at, rows in by_created_at.items():
+        version = _version_at_time(agg_created_at, change_logs)
         expected_map = {
             (row[0], row[1]): row
             for row in _expected_sector_sliding(
-                member_records, flows_by_code, window, snapshot_date,
+                member_history, change_logs, flows_by_code, window, agg_created_at,
             )
         }
         for row in rows:
@@ -382,7 +475,7 @@ def _validate_sector_sliding(
             if expected is None:
                 report.add(Issue(
                     "sector", code, label,
-                    f"写入日 {snapshot_date} 无法复现窗口 "
+                    f"version {version} 无法复现窗口 "
                     f"(start={start_date}, end={end_date})",
                 ))
                 continue
@@ -397,13 +490,13 @@ def _validate_sector_sliding(
                 report.add(Issue(
                     "sector", code, label,
                     f"main_net 错误 {main_net:.4f} != {expected[3]:.4f} "
-                    f"(start={start_date}, end={end_date}, snapshot={snapshot_date})",
+                    f"(start={start_date}, end={end_date}, version={version})",
                 ))
             if main_cnt != expected[4]:
                 report.add(Issue(
                     "sector", code, label,
                     f"main_cnt 错误 {main_cnt} != {expected[4]} "
-                    f"(start={start_date}, end={end_date}, snapshot={snapshot_date})",
+                    f"(start={start_date}, end={end_date}, version={version})",
                 ))
 
 
@@ -489,17 +582,20 @@ def validate_stock(
 
 def validate_sector(
     code: str,
-    member_records: List[MemberRecord],
+    members: List[str],
+    sector_version: int,
+    change_logs: Sequence[SectorChangeLog],
     flows_by_code: Dict[str, List[FlowRow]],
     stock_aggs: Dict[str, Dict],
     sector_aggs: Dict,
     report: ValidationReport,
 ) -> None:
-    if not member_records:
+    if not members:
         return
 
-    member_codes = [m[0] for m in member_records]
-    member_flows_exist = any(flows_by_code.get(m) for m in member_codes)
+    member_history = _build_member_history(members, sector_version, change_logs)
+    all_members = _all_members_from_history(member_history)
+    member_flows_exist = any(flows_by_code.get(m) for m in all_members)
     if not member_flows_exist:
         if sector_aggs["accumulation"] or any(sector_aggs["sliding"][w] for w in WINDOWS):
             report.add(Issue("sector", code, "accumulation", "成分股无 flow 但存在聚合数据"))
@@ -507,16 +603,16 @@ def validate_sector(
 
     stock_accumulations = {
         m: stock_aggs.get(m, {}).get("accumulation", [])
-        for m in member_codes
+        for m in all_members
     }
     _validate_sector_accumulation(
-        code, member_records, stock_accumulations,
+        code, member_history, change_logs, stock_accumulations,
         sector_aggs["accumulation"], report,
     )
 
     for window in WINDOWS:
         _validate_sector_sliding(
-            code, member_records, flows_by_code,
+            code, member_history, change_logs, flows_by_code,
             sector_aggs["sliding"][window], window, report,
         )
 
@@ -531,6 +627,7 @@ def run_validation(
     with get_db() as conn:
         all_stocks = _load_stocks(conn)
         all_sectors = _load_sectors(conn)
+        sector_change_logs = _load_sector_change_logs(conn, all_sectors.keys())
 
         if codes:
             stock_codes = [c for c in codes if c in all_stocks or c[0].isdigit()]
@@ -545,9 +642,12 @@ def run_validation(
 
         member_codes: set[str] = set()
         if scope in ("all", "sector"):
-            member_codes = {
-                m[0] for sc in sector_codes for m in all_sectors.get(sc, [])
-            }
+            for sc in sector_codes:
+                members, ver = all_sectors.get(sc, ([], 0))
+                history = _build_member_history(
+                    members, ver, sector_change_logs.get(sc, []),
+                )
+                member_codes |= _all_members_from_history(history)
 
         relevant_flow_codes: set[str] = set()
         if scope in ("all", "stock"):
@@ -574,9 +674,12 @@ def run_validation(
 
     if scope in ("all", "sector"):
         for code in sector_codes:
+            members, sector_version = all_sectors.get(code, ([], 0))
             validate_sector(
                 code,
-                all_sectors.get(code, []),
+                members,
+                sector_version,
+                sector_change_logs.get(code, []),
                 flows_by_code,
                 aggregations,
                 aggregations.get(code, {"accumulation": [], "sliding": {w: [] for w in WINDOWS}}),
