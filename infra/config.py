@@ -18,9 +18,9 @@ def _load_config() -> dict[str, Any]:
         return tomllib.load(f)
 
 
-def get_money_flow_earliest_date() -> date:
-    """读取 money flow 数据的最早起始日期"""
-    raw = _load_config()["money_flow"]["earliest_date"]
+def get_market_earliest_date() -> date:
+    """读取历史数据首次拉取的起始日期（资金流向、日线行情等共用）"""
+    raw = _load_config()["market"]["earliest_date"]
     if isinstance(raw, date):
         return raw
     return datetime.strptime(str(raw), "%Y-%m-%d").date()

@@ -8,6 +8,7 @@ from infra.adapters.tushare_adapter import TushareAdapter
 from domain.stock_repository import StockRepository
 from domain.sector_repository import SectorRepository
 from domain.money_flow_repository import MoneyFlowRepository
+from domain.daily_quote_repository import DailyQuoteRepository
 from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
 from domain.money_flow_aggregator import MoneyFlowAggregator
 from domain.downloader import Downloader
@@ -57,6 +58,12 @@ class AppContainer(containers.DeclarativeContainer):
         flow_adapter=tushare_adapter,
     )
 
+    daily_quote_repo = providers.Singleton(
+        DailyQuoteRepository,
+        stock_adapter=efinance_adapter,
+        quote_adapter=tushare_adapter,
+    )
+
     money_flow_aggregation_repo = providers.Singleton(
         MoneyFlowAggregationRepository,
     )
@@ -79,6 +86,8 @@ class AppContainer(containers.DeclarativeContainer):
         stock_repo=stock_repo,
         sector_repo=sector_repo,
         money_flow_repo=money_flow_repo,
+        daily_quote_repo=daily_quote_repo,
+        default_pool=default_pool,
     )
 
 

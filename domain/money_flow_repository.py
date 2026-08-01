@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from domain.money_flow import MoneyFlow
 from infra.adapters.efinance_adapter import EfinanceAdapter
 from infra.adapters.tushare_adapter import TushareAdapter
-from infra.config import get_money_flow_earliest_date
+from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -83,7 +83,7 @@ class MoneyFlowRepository:
             if last_date:
                 start_date = last_date + timedelta(days=1)
             else:
-                start_date = get_money_flow_earliest_date()
+                start_date = get_market_earliest_date()
 
             today = date.today()
             if start_date > today:
@@ -94,11 +94,11 @@ class MoneyFlowRepository:
             logger.info(f"{index}: 正在获取股票 {code} 资金流向数据 "
                   f"[{start_date} -> {today}]...")
             flows = self._flow_adapter.get_daily_flow(code, start_date, today)
-            time.sleep(self._REQUEST_INTERVAL_SECONDS)
-
             if flows:
                 self._save_flows_to_db(flows)
                 total_saved += len(flows)
+
+            time.sleep(self._REQUEST_INTERVAL_SECONDS)
 
         logger.info(f"资金流向数据更新完成，共保存 {total_saved} 条新记录")
 

@@ -39,9 +39,7 @@ CREATE TABLE IF NOT EXISTS sector_members (
     created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     is_deleted  INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (sector_code, stock_code),
-    FOREIGN KEY (sector_code) REFERENCES sectors(code),
-    FOREIGN KEY (stock_code)  REFERENCES stocks(code)
+    PRIMARY KEY (sector_code, stock_code)
 );
 """
 
@@ -53,8 +51,7 @@ CREATE TABLE IF NOT EXISTS sector_change_logs (
     old_value       TEXT NOT NULL DEFAULT '',        -- 变更前值
     new_value       TEXT NOT NULL DEFAULT '',        -- 变更后值
     version         INTEGER NOT NULL DEFAULT 0,      -- 变更版本
-    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    FOREIGN KEY (sector_code) REFERENCES sectors(code)
+    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 """
 
@@ -97,7 +94,7 @@ CREATE TABLE IF NOT EXISTS money_flows (
 );
 """
 
-# 每日行情（可选，目前 DailyQuote 模型已定义但未使用）
+# 每日行情（前复权日线）
 CREATE_DAILY_QUOTES_TABLE = """
 CREATE TABLE IF NOT EXISTS daily_quotes (
     code        TEXT NOT NULL,
@@ -108,6 +105,7 @@ CREATE TABLE IF NOT EXISTS daily_quotes (
     close       REAL NOT NULL,
     volume      INTEGER NOT NULL,       -- 成交量(手)
     amount      REAL NOT NULL,          -- 成交额(万元)
+    change      REAL NOT NULL DEFAULT 0.0,  -- 涨跌额
     pct_chg     REAL NOT NULL,          -- 涨跌幅(%)
     created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -222,6 +220,7 @@ def init_db() -> None:
             ("money_flows", "small_sell_net REAL"),
             ("money_flows", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("money_flows", "is_deleted INTEGER NOT NULL DEFAULT 0"),
+            ("daily_quotes", "change REAL NOT NULL DEFAULT 0.0"),
             ("daily_quotes", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("daily_quotes", "is_deleted INTEGER NOT NULL DEFAULT 0"),
         ]:

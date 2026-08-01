@@ -1,5 +1,6 @@
 """
-Streamlit 数据看板：展示个股/板块的 accumulation 走势图
+Streamlit 数据看板：展示个股/板块的 accumulation / sliding，
+并可叠加日线收盘价对比观察。
 
 使用方式：
     streamlit run endpoint/dashboard.py
@@ -11,14 +12,15 @@ import sys
 import time
 import webbrowser
 from pathlib import Path
-import streamlit as st
-import plotly.graph_objects as go
-from datetime import date, timedelta
-from typing import List, Optional
+from typing import List, Optional, Sequence, Tuple
 
+import plotly.graph_objects as go
+import streamlit as st
+from datetime import date
+
+from domain.daily_quote import DailyQuote
+from domain.money_flow_aggregation import MoneyFlowAggregation
 from infra.container import container
-from infra.log import logger
-from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _STREAMLIT_LOG = _PROJECT_ROOT / "logs" / "streamlit.log"
@@ -144,6 +146,67 @@ class Dashboard:
         Dashboard._process = None
 
     @staticmethod
+    def _filter_quotes(
+        quotes: Sequence[DailyQuote],
+        start: Optional[date],
+        end: Optional[date],
+    ) -> Tuple[List[date], List[float]]:
+        filtered = [
+            q for q in quotes
+            if (start is None or q.date >= start) and (end is None or q.date <= end)
+        ]
+        return [q.date for q in filtered], [q.close for q in filtered]
+
+    @staticmethod
+    def _add_quote_trace(
+        fig: go.Figure,
+        quotes: Sequence[DailyQuote],
+        start: Optional[date],
+        end: Optional[date],
+    ) -> bool:
+        """叠加收盘价到次坐标轴；有数据时返回 True"""
+        dates, closes = Dashboard._filter_quotes(quotes, start, end)
+        if not dates:
+            return False
+        fig.add_trace(go.Scatter(
+            x=dates,
+            y=closes,
+            mode='lines',
+            name='收盘价',
+            line=dict(color='#5c6bc0', width=1.5),
+            yaxis='y2',
+        ))
+        return True
+
+    @staticmethod
+    def _apply_dual_axis_layout(
+        fig: go.Figure,
+        title: str,
+        y_title: str,
+        height: int,
+        has_quote: bool,
+        x_title: str = '日期',
+    ) -> None:
+        layout = dict(
+            title=title,
+            xaxis_title=x_title,
+            yaxis_title=y_title,
+            hovermode='x unified',
+            template='plotly_white',
+            height=height,
+            margin=dict(l=40, r=60 if has_quote else 40, t=60, b=40),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
+        )
+        if has_quote:
+            layout['yaxis2'] = dict(
+                title='收盘价（元）',
+                overlaying='y',
+                side='right',
+                showgrid=False,
+            )
+        fig.update_layout(**layout)
+
+    @staticmethod
     def _render() -> None:
         """Streamlit UI 入口（由 streamlit run 调用）"""
 
@@ -158,6 +221,7 @@ class Dashboard:
         _agg_repo = container.money_flow_aggregation_repo()
         _stock_repo = container.stock_repo()
         _sector_repo = container.sector_repo()
+        _quote_repo = container.daily_quote_repo()
 
         def _load_stocks() -> List[str]:
             """获取所有股票代码列表（用于选择）"""
@@ -173,8 +237,12 @@ class Dashboard:
             """获取实体的所有累计净流入数据（is_accumulative=1）"""
             return _agg_repo.find_accumulations_by_code(code, since=None, force=True)
 
-        def _plot_accumulation(aggs: List[MoneyFlowAggregation], title: str) -> None:
-            """绘制累计净流入走势图"""
+        def _plot_accumulation(
+            aggs: List[MoneyFlowAggregation],
+            title: str,
+            quotes: Optional[List[DailyQuote]] = None,
+        ) -> None:
+            """绘制累计净流入走势图，可选叠加收盘价"""
             if not aggs:
                 st.info("没有数据可展示，请先通过控制台执行 download 和 aggregate 命令。")
                 return
@@ -195,14 +263,43 @@ class Dashboard:
                 fillcolor='rgba(38, 166, 154, 0.2)',
             ))
             fig.add_hline(y=0, line_dash='dash', line_color='gray', opacity=0.5)
-            fig.update_layout(
-                title=title,
-                xaxis_title='日期',
-                yaxis_title='累计净流入（万元）',
-                hovermode='x unified',
-                template='plotly_white',
-                height=600,
-                margin=dict(l=40, r=40, t=60, b=40),
+
+            has_quote = False
+            if quotes:
+                has_quote = Dashboard._add_quote_trace(
+                    fig, quotes, dates[0], dates[-1],
+                )
+            Dashboard._apply_dual_axis_layout(
+                fig, title, '累计净流入（万元）', 600, has_quote,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        def _plot_sliding(
+            sliding: List[MoneyFlowAggregation],
+            title: str,
+            window: int,
+            quotes: Optional[List[DailyQuote]] = None,
+        ) -> None:
+            sliding = sorted(sliding, key=lambda a: a.end_date)
+            dates = [a.end_date for a in sliding]
+            values = [a.main_net for a in sliding]
+
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=dates,
+                y=values,
+                name=f'{window}日净流入',
+                marker_color=['#ef5350' if v < 0 else '#26a69a' for v in values],
+            ))
+            fig.add_hline(y=0, line_dash='dash', line_color='gray', opacity=0.5)
+
+            has_quote = False
+            if quotes:
+                has_quote = Dashboard._add_quote_trace(
+                    fig, quotes, dates[0], dates[-1],
+                )
+            Dashboard._apply_dual_axis_layout(
+                fig, title, '净流入（万元）', 400, has_quote, x_title='结束日期',
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -235,27 +332,47 @@ class Dashboard:
         selected_name = selected_label.split(" - ")[1].strip()
 
         show_sliding = st.sidebar.checkbox("同时展示滑动窗口（3/5/10/20日）", value=False)
+        show_quote = False
+        if entity_type == "个股":
+            show_quote = st.sidebar.checkbox("叠加日线收盘价对比", value=True)
 
         # ── 主界面 ─────────────────────────────────────────────────
         st.title(f"{entity_type}：{selected_name}（{selected_code}）")
         st.markdown("---")
 
+        quotes: List[DailyQuote] = []
+        if show_quote:
+            quotes = _quote_repo.find_by_code(selected_code, force=True)
+
         accumulations = _get_accumulation_data(selected_code)
 
         if accumulations:
             latest = accumulations[-1]
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("统计区间", f"{accumulations[0].end_date} ~ {latest.end_date}")
-            col2.metric("交易天数", f"{latest.trading_days} 天")
+            cols = st.columns(5 if quotes else 4)
+            cols[0].metric("统计区间", f"{accumulations[0].end_date} ~ {latest.end_date}")
+            cols[1].metric("交易天数", f"{latest.trading_days} 天")
             prev = accumulations[-2].main_net if len(accumulations) > 1 else 0
-            col3.metric(
+            cols[2].metric(
                 "累计净流入", f"{latest.main_net:,.0f} 万元",
                 delta=f"{latest.main_net - prev:,.0f}",
             )
-            col4.metric("累计笔数", f"{latest.main_cnt:,}")
+            cols[3].metric("累计笔数", f"{latest.main_cnt:,}")
+            if quotes:
+                latest_quote = quotes[-1]
+                cols[4].metric(
+                    "最新收盘", f"{latest_quote.close:.2f} 元",
+                    delta=f"{latest_quote.pct_chg:.2f}%",
+                )
             st.markdown("---")
 
-            _plot_accumulation(accumulations, f"{selected_name} 累计净流入走势")
+            quote_for_plot = quotes if show_quote else None
+            _plot_accumulation(
+                accumulations,
+                f"{selected_name} 累计净流入走势",
+                quotes=quote_for_plot,
+            )
+            if show_quote and not quotes:
+                st.info("暂无日线行情数据，请先执行 download 下载。")
 
             if show_sliding:
                 st.markdown("---")
@@ -268,27 +385,12 @@ class Dashboard:
                     with tab:
                         sliding = _agg_repo.find_by_trading_days(selected_code, window)
                         if sliding:
-                            sliding.sort(key=lambda a: a.start_date)
-                            dates = [a.start_date for a in sliding]
-                            values = [a.main_net for a in sliding]
-
-                            fig = go.Figure()
-                            fig.add_trace(go.Bar(
-                                x=dates,
-                                y=values,
-                                name=f'{window}日净流入',
-                                marker_color=['#ef5350' if v < 0 else '#26a69a' for v in values],
-                            ))
-                            fig.add_hline(y=0, line_dash='dash', line_color='gray', opacity=0.5)
-                            fig.update_layout(
-                                title=f'{selected_name} {window}日净流入',
-                                xaxis_title='起始日期',
-                                yaxis_title='净流入（万元）',
-                                hovermode='x unified',
-                                template='plotly_white',
-                                height=400,
+                            _plot_sliding(
+                                sliding,
+                                f'{selected_name} {window}日净流入',
+                                window,
+                                quotes=quote_for_plot,
                             )
-                            st.plotly_chart(fig, use_container_width=True)
                         else:
                             st.info(f"暂无 {window}日 滑动窗口数据，请先执行 aggregate 命令。")
         else:

@@ -3,6 +3,7 @@
 import shlex
 import sys
 
+from infra.log import logger
 from infra.container import container
 from endpoint.dashboard import Dashboard
 
@@ -34,8 +35,9 @@ class Console:
                     break
                 elif cmd in ("help"):
                     self._show_help()
-                elif cmd in ("download", "sync") :
-                    self._downloader.download_all()
+                elif cmd in ("download", "sync"):
+                    scopes = parts[1:] or None
+                    self._downloader.download(scopes)
                     print("\n✅ download 完成")
                 elif cmd in ("aggregate", "aggr"):
                     args_cnt = len(parts) - 1
@@ -68,7 +70,8 @@ class Console:
     def _show_help(self) -> None:
         print("可用命令:")
         print("  help                                                       - 显示帮助信息")
-        print("  download / sync                                            - 下载股票 + 板块 + 资金流向 + 聚合")
+        print("  download / sync                                            - 依次下载全部数据")
+        print("    download stock sector quote flow                         - 按 scope 多选下载")
         print("  aggregate / aggr                                           - 仅执行数据聚合")
         print("    aggregate stock [code ...] / aggr stock [code ...]       - 仅执行股票数据聚合")
         print("    aggregate sector [code ...] / aggr sector [code ...]     - 仅执行板块数据聚合")

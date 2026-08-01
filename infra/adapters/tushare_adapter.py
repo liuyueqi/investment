@@ -1,13 +1,16 @@
-import os
+import math
 from pathlib import Path
 
 import tushare as ts
 from datetime import date, datetime
 from typing import List, Optional
+
+from domain.daily_quote import DailyQuote
 from domain.money_flow import MoneyFlow
-from .external_data_adapter import ExternalDataAdapter
-from infra.log import logger
 from domain.stock_code import to_ts_code
+from infra.log import logger
+from .external_data_adapter import ExternalDataAdapter
+from domain.stock_code import normalize_code
 
 class TushareAdapter(ExternalDataAdapter):
     """基于 Tushare Pro 的数据适配器"""
@@ -96,7 +99,7 @@ class TushareAdapter(ExternalDataAdapter):
                 net_mf_amount = row.get('net_mf_amount', 0.0)
 
                 money_flow = MoneyFlow.daily(
-                    code = ts_code.split('.')[0],
+                    code = normalize_code(ts_code.split('.')[0] if ts_code else (code or '')),
                     date = trade_date,
 
                     main_cnt = net_mf_vol,                      # 净流入量(手)
@@ -131,3 +134,65 @@ class TushareAdapter(ExternalDataAdapter):
         except Exception as e:
             logger.error(f"获取股票 {code} 资金流向失败", e)
             return []
+
+    # ========== 日线行情 ==========
+
+    def get_daily_quote(
+        self, code: str, start_date: date, end_date: date,
+    ) -> List[DailyQuote]:
+        """
+        获取个股前复权日线行情。
+
+        接口文档: https://tushare.pro/document/2?doc_id=146
+
+        Args:
+            code: 股票代码（6位纯数字）
+            start_date: 查询起始日期
+            end_date: 查询结束日期
+        """
+        try:
+            results = ts.pro_bar(
+                ts_code=to_ts_code(code),
+                api=self._pro,
+                start_date=start_date.strftime('%Y%m%d'),
+                end_date=end_date.strftime('%Y%m%d'),
+                asset='E',
+                adj='qfq',
+                freq='D',
+            )
+            if results is None or results.empty:
+                return []
+
+            quotes = []
+            for _, row in results.iterrows():
+                ts_code = str(row.get('ts_code', '') or '')
+                trade_date = datetime.strptime(str(row['trade_date']), '%Y%m%d').date()
+                if trade_date < start_date or trade_date > end_date:
+                    continue
+                # Tushare amount 单位为千元，DailyQuote 使用万元
+                amount = self._to_float(row.get('amount')) / 10.0
+                quotes.append(DailyQuote(
+                    code=normalize_code(ts_code.split('.')[0] if ts_code else code),
+                    date=trade_date,
+                    open=self._to_float(row.get('open')),
+                    high=self._to_float(row.get('high')),
+                    low=self._to_float(row.get('low')),
+                    close=self._to_float(row.get('close')),
+                    volume=int(self._to_float(row.get('vol'))),
+                    amount=amount,
+                    change=self._to_float(row.get('change')),
+                    pct_chg=self._to_float(row.get('pct_chg')),
+                ))
+            return quotes
+        except Exception as e:
+            logger.error(f"获取股票 {code} 日线行情失败", e)
+            return []
+
+    def _to_float(self, value) -> float:
+        if value is None:
+            return 0.0
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return 0.0 if math.isnan(number) else number

@@ -5,7 +5,7 @@ from datetime import date
 @dataclass
 class DailyQuote:
     """每日行情数据（适用于股票、指数、ETF 等）"""
-    code: str         # 实体代码，如 '000001.SZ'
+    code: str         # 实体代码，如 '000001'
     date: date
     open: float
     high: float
@@ -13,4 +13,5 @@ class DailyQuote:
     close: float
     volume: int       # 成交量（手）
     amount: float     # 成交额（万元）
+    change: float     # 涨跌额
     pct_chg: float    # 涨跌幅（%）
