@@ -95,6 +95,7 @@ class AppContainer(containers.DeclarativeContainer):
         sector_repo=sector_repo,
         money_flow_repo=money_flow_repo,
         daily_quote_repo=daily_quote_repo,
+        trading_day_repo=trading_day_repo,
         default_pool=default_pool,
     )
 

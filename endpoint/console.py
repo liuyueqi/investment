@@ -70,8 +70,8 @@ class Console:
     def _show_help(self) -> None:
         print("可用命令:")
         print("  help                                                       - 显示帮助信息")
-        print("  download / sync                                            - 依次下载全部数据")
-        print("    download stock sector quote flow                         - 按 scope 多选下载")
+        print("  download / sync                                            - 依次下载全部数据（含交易日历）")
+        print("    download stock sector quote flow                         - 按 scope 多选下载（仍会刷新交易日历）")
         print("  aggregate / aggr                                           - 仅执行数据聚合")
         print("    aggregate stock [code ...] / aggr stock [code ...]       - 仅执行股票数据聚合")
         print("    aggregate sector [code ...] / aggr sector [code ...]     - 仅执行板块数据聚合")

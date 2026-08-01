@@ -1,4 +1,4 @@
-"""数据下载器：从外部接口下载股票 / 板块 / 资金流向 / 日线行情到本地数据库"""
+"""数据下载器：从外部接口下载交易日 / 股票 / 板块 / 资金流向 / 日线行情到本地数据库"""
 
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,6 +9,7 @@ from domain.daily_quote_repository import DailyQuoteRepository
 from domain.money_flow_repository import MoneyFlowRepository
 from domain.sector_repository import SectorRepository
 from domain.stock_repository import StockRepository
+from domain.trading_day_repository import TradingDayRepository
 from infra.database.schema import init_db
 from infra.log import logger
 
@@ -35,12 +36,14 @@ class Downloader:
         sector_repo: SectorRepository,
         money_flow_repo: MoneyFlowRepository,
         daily_quote_repo: DailyQuoteRepository,
+        trading_day_repo: TradingDayRepository,
         default_pool: ThreadPoolExecutor,
     ):
         self._stock_repo = stock_repo
         self._sector_repo = sector_repo
         self._money_flow_repo = money_flow_repo
         self._daily_quote_repo = daily_quote_repo
+        self._trading_day_repo = trading_day_repo
         self._default_pool = default_pool
 
     # ── 数据库初始化 ──────────────────────────────────────────
@@ -82,6 +85,14 @@ class Downloader:
         return [stock.code for stock in self._stock_repo.find_all()]
 
     # ── 步骤方法 ──────────────────────────────────────────────
+
+    def _download_trading_days(self) -> None:
+        """下载交易日历（默认增量，非强制）"""
+        logger.info(f"\n{SEPARATOR}")
+        logger.info("下载交易日历")
+        logger.info(SEPARATOR)
+
+        self._trading_day_repo.refresh(incr=True, force=False)
 
     def _download_stocks(self) -> None:
         """下载股票数据到数据库"""
@@ -161,8 +172,10 @@ class Downloader:
         Args:
             scope: 下载范围，支持 stock / sector / quote / flow。
                    为空则依次下载全部：stock → sector → quote → flow。
+                   无论 scope 如何，都会先刷新交易日历（incr=True, force=False）。
 
         依赖关系：
+            - trading_days 每次 download 都会刷新
             - stock 独立下载
             - sector / quote / flow 均依赖 stock_repository 中的最新股票列表
         """
@@ -172,6 +185,9 @@ class Downloader:
         logger.info(f"开始下载，scope={sorted(s.value for s in scopes)}")
 
         self._init_database()
+
+        # 交易日历：每次 download 默认执行
+        self._download_trading_days()
 
         if DownloadScope.STOCK in scopes:
             self._download_stocks()
