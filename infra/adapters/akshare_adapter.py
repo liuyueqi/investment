@@ -1,27 +1,56 @@
+from datetime import date, datetime
+from typing import List, Optional
+
 import akshare as ak
-from typing import List
 
 from domain.etf import ETF
+from domain.trading_day import TradingDay
+from infra.log import logger
+from .external_data_adapter import ExternalDataAdapter
 
-class AkshareAdapter:
+
+class AkshareAdapter(ExternalDataAdapter):
+    """基于 akshare 的数据适配器"""
+
+    def get_all_trading_days(self) -> List[TradingDay]:
+        """
+        获取股票交易日历。
+
+        接口文档: https://akshare.akfamily.xyz/data/tool/tool.html#id1
+        """
+        try:
+            df = ak.tool_trade_date_hist_sina()
+            if df is None or df.empty:
+                return []
+
+            trading_days: List[TradingDay] = []
+            for value in df["trade_date"]:
+                trade_date = self._parse_trade_date(value)
+                if trade_date is not None:
+                    trading_days.append(TradingDay(trade_date=trade_date))
+            return trading_days
+        except Exception as e:
+            logger.error(f"获取交易日历失败: {e}", exc_info=True)
+            return []
+
     def get_all_etf_info(self) -> List[ETF]:
         try:
             # 使用 symbol="ETF基金" 获取全量上市基金（含 ETF 和 LOF）
             df = ak.fund_etf_category_sina(symbol="ETF基金")
             if df is None or df.empty:
                 return []
-            
+
             etfs = []
             for _, row in df.iterrows():
                 code_raw = str(row['代码'])  # 如 'sz159998' 或 'sh510300'
                 # 去除市场前缀
                 code = code_raw.replace('sh', '').replace('sz', '').replace('bj', '')
                 code = code.zfill(6)
-                
+
                 # 过滤出真正的 ETF（仅包含沪市特定前缀和深市 159xxx）
                 if not self._is_etf_code(code):
                     continue
-                
+
                 name = row['名称']
                 # 推断市场
                 if code.startswith('5'):
@@ -37,13 +66,27 @@ class AkshareAdapter:
                 ))
             return etfs
         except Exception as e:
-            print(f"获取 ETF 列表失败: {e}")
+            logger.error(f"获取 ETF 列表失败: {e}", exc_info=True)
             return []
-    
+
+    def _parse_trade_date(self, value) -> Optional[date]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        if len(text) == 8 and text.isdigit():
+            return datetime.strptime(text, "%Y%m%d").date()
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+
     def _is_etf_code(self, code: str) -> bool:
         """判断股票代码是否为真正的 ETF（基于代码范围）"""
         # 沪市 ETF 代码前缀
-        sh_prefixes = ['510', '511', '512', '513', '515', '516', '517', '518', 
+        sh_prefixes = ['510', '511', '512', '513', '515', '516', '517', '518',
                        '560', '561', '562', '563', '588']
         # 深市 ETF 代码前缀
         sz_prefixes = ['159']

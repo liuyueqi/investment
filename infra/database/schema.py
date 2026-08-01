@@ -114,6 +114,16 @@ CREATE TABLE IF NOT EXISTS daily_quotes (
 );
 """
 
+# 交易日历
+CREATE_TRADING_DAYS_TABLE = """
+CREATE TABLE IF NOT EXISTS trading_days (
+    trade_date  TEXT PRIMARY KEY,       -- '2025-06-08'
+    created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    is_deleted  INTEGER NOT NULL DEFAULT 0
+);
+"""
+
 # 资金流聚合数据（与原始 money_flows 数据分离，按 code + start_date + end_date + is_accumulative 唯一标识）
 CREATE_MONEY_FLOW_AGGREGATION_TABLE = """
 CREATE TABLE IF NOT EXISTS money_flow_aggregation (
@@ -166,6 +176,7 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_money_flows_code ON money_flows(code);",
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_code ON daily_quotes(code);",
     "CREATE INDEX IF NOT EXISTS idx_daily_quotes_date ON daily_quotes(trade_date);",
+    "CREATE INDEX IF NOT EXISTS idx_trading_days_date ON trading_days(trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_sector_members_stock ON sector_members(stock_code);",
     "CREATE INDEX IF NOT EXISTS idx_sectors_sign ON sectors(sign);",
     "CREATE INDEX IF NOT EXISTS idx_sector_change_logs_sector_version ON sector_change_logs(sector_code, version);",
@@ -191,6 +202,7 @@ def init_db() -> None:
         conn.execute(CREATE_SECTOR_CHANGE_LOGS_TABLE)
         conn.execute(CREATE_MONEY_FLOWS_TABLE)
         conn.execute(CREATE_DAILY_QUOTES_TABLE)
+        conn.execute(CREATE_TRADING_DAYS_TABLE)
         conn.execute(CREATE_MONEY_FLOW_AGGREGATION_TABLE)
         for table, column in [
             ("stocks", "ts_code TEXT"),
@@ -223,6 +235,8 @@ def init_db() -> None:
             ("daily_quotes", "change REAL NOT NULL DEFAULT 0.0"),
             ("daily_quotes", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("daily_quotes", "is_deleted INTEGER NOT NULL DEFAULT 0"),
+            ("trading_days", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
+            ("trading_days", "is_deleted INTEGER NOT NULL DEFAULT 0"),
         ]:
             _ensure_column(conn, table, column)
         for idx in CREATE_INDEXES:

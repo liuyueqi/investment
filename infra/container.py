@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from dependency_injector import containers, providers
 
+from infra.adapters.akshare_adapter import AkshareAdapter
 from infra.adapters.efinance_adapter import EfinanceAdapter
 from infra.adapters.tushare_adapter import TushareAdapter
 from domain.stock_repository import StockRepository
@@ -20,6 +21,7 @@ class AppContainer(containers.DeclarativeContainer):
     # ── 适配器（单例） ────────────────────────────────────────
     efinance_adapter = providers.Singleton(EfinanceAdapter)
     tushare_adapter = providers.Singleton(TushareAdapter)
+    akshare_adapter = providers.Singleton(AkshareAdapter)
 
     # ── 线程池（单例） ──────────────────────────────────────
     default_pool = providers.Singleton(

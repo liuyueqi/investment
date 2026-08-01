@@ -6,6 +6,7 @@ from domain.stock import Stock
 from domain.etf import ETF
 from domain.money_flow import MoneyFlow
 from domain.daily_quote import DailyQuote
+from domain.trading_day import TradingDay
 
 class ExternalDataAdapter(ABC):
     """外部数据提供者接口（所有适配器必须实现）"""
@@ -16,6 +17,10 @@ class ExternalDataAdapter(ABC):
 
     def get_all_etf_info(self) -> List[ETF]:
         raise NotImplementedError("get_all_etf_info 方法未实现")
+
+    def get_all_trading_days(self) -> List[TradingDay]:
+        """获取全部交易日列表"""
+        raise NotImplementedError("get_all_trading_days 方法未实现")
     
     def get_stock_sectors(self, stock_code: str) -> List[Dict[str, str]]:
         """获取股票所属板块列表"""
