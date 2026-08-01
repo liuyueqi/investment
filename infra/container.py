@@ -10,6 +10,7 @@ from domain.stock_repository import StockRepository
 from domain.sector_repository import SectorRepository
 from domain.money_flow_repository import MoneyFlowRepository
 from domain.daily_quote_repository import DailyQuoteRepository
+from domain.trading_day_repository import TradingDayRepository
 from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
 from domain.money_flow_aggregator import MoneyFlowAggregator
 from domain.downloader import Downloader
@@ -64,6 +65,11 @@ class AppContainer(containers.DeclarativeContainer):
         DailyQuoteRepository,
         stock_adapter=efinance_adapter,
         quote_adapter=tushare_adapter,
+    )
+
+    trading_day_repo = providers.Singleton(
+        TradingDayRepository,
+        adapter=akshare_adapter,
     )
 
     money_flow_aggregation_repo = providers.Singleton(
