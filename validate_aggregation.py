@@ -1,15 +1,17 @@
 """验证 money_flow_aggregation 数据的完整性与正确性
 
 检查项：
-  1. 个股 accumulation / sliding：与 money_flows 直接计算结果比对
-  2. 板块 accumulation：按 sector_change_logs 重建的版本快照验证
-  3. 板块 sliding：按聚合记录写入时点对应的板块版本验证
+  1. 自 config.toml market.earliest_date 起每个交易日，个股 money_flows 有数据率 >= 95%
+  2. 个股 accumulation / sliding：与 money_flows 直接计算结果比对
+  3. 板块 accumulation：按 sector_change_logs 重建的版本快照验证
+  4. 板块 sliding：按聚合记录写入时点对应的板块版本验证
 
 板块成分股历史通过 sector_change_logs 回放得到；无变更记录时以当前成分股（version 0）验证。
 
 用法：
   python validate_aggregation.py                  # 检查全部
-  python validate_aggregation.py --scope stock    # 仅检查个股
+  python validate_aggregation.py --scope stock    # 仅检查个股（含 flow 覆盖率）
+  python validate_aggregation.py --scope coverage # 仅检查 flow 覆盖率
   python validate_aggregation.py --code 000001    # 检查指定代码
   python validate_aggregation.py --limit 50       # 抽样检查（各类各取前 N 个）
 """
@@ -23,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
 from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
 from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
@@ -30,6 +33,7 @@ from domain.sector_change_log import SectorChangeAction, SectorChangeLog
 
 WINDOWS = (3, 5, 10, 20)
 TOLERANCE = 0.01  # 万元，允许浮点误差
+FLOW_COVERAGE_MIN_RATE = 0.95
 
 _agg_repo = MoneyFlowAggregationRepository()
 
@@ -558,6 +562,94 @@ def _compare_agg_series(
             ))
 
 
+def _load_trading_days_between(conn, start_date: date, end_date: date) -> List[date]:
+    rows = conn.execute(
+        """SELECT trade_date
+           FROM trading_days
+           WHERE is_deleted = 0
+             AND trade_date >= ?
+             AND trade_date <= ?
+           ORDER BY trade_date""",
+        (start_date.isoformat(), end_date.isoformat()),
+    ).fetchall()
+    return [datetime.strptime(row["trade_date"], "%Y-%m-%d").date() for row in rows]
+
+
+def _load_flow_counts_by_date(
+    conn, start_date: date, end_date: date,
+) -> Dict[date, int]:
+    """按日统计有 flow 的个股数（排除北交所）"""
+    rows = conn.execute(
+        """SELECT f.trade_date, COUNT(DISTINCT f.code) AS cnt
+           FROM money_flows f
+           JOIN stocks s ON s.code = f.code AND s.is_deleted = 0
+           WHERE f.period = 'day'
+             AND f.is_deleted = 0
+             AND s.market != 'BJ'
+             AND f.trade_date >= ?
+             AND f.trade_date <= ?
+           GROUP BY f.trade_date""",
+        (start_date.isoformat(), end_date.isoformat()),
+    ).fetchall()
+    return {
+        datetime.strptime(row["trade_date"], "%Y-%m-%d").date(): int(row["cnt"])
+        for row in rows
+    }
+
+
+def validate_flow_coverage(conn, report: ValidationReport) -> None:
+    """校验自 market.earliest_date 起每个交易日的个股 money_flows 有数据率（排除北交所）"""
+    start_date = get_market_earliest_date()
+    end_date = date.today()
+    stock_count = conn.execute(
+        """SELECT COUNT(*) AS cnt FROM stocks
+           WHERE is_deleted = 0 AND market != 'BJ'"""
+    ).fetchone()["cnt"]
+    if stock_count <= 0:
+        report.add(Issue(
+            "market", "*", "flow_coverage",
+            "stocks 表无有效沪深个股，无法校验有数据率",
+        ))
+        return
+
+    trading_days = _load_trading_days_between(conn, start_date, end_date)
+    if not trading_days:
+        report.add(Issue(
+            "market", "*", "flow_coverage",
+            f"trading_days 在 {start_date} ~ {end_date} 无数据，"
+            "请先 download 交易日历",
+        ))
+        return
+
+    flow_counts = _load_flow_counts_by_date(conn, start_date, end_date)
+    failed = 0
+    min_rate = 1.0
+    min_rate_date: Optional[date] = None
+
+    for trade_date in trading_days:
+        have = flow_counts.get(trade_date, 0)
+        rate = have / stock_count
+        if rate < min_rate:
+            min_rate = rate
+            min_rate_date = trade_date
+        if rate < FLOW_COVERAGE_MIN_RATE:
+            failed += 1
+            report.add(Issue(
+                "market", "*", "flow_coverage",
+                f"{trade_date} 有数据率 {rate:.2%} < {FLOW_COVERAGE_MIN_RATE:.0%} "
+                f"({have}/{stock_count})",
+            ))
+
+    print(
+        f"flow 覆盖率检查（排除北交所）：交易日 {len(trading_days)} 天，"
+        f"股票池 {stock_count} 只，低于 {FLOW_COVERAGE_MIN_RATE:.0%} 的交易日 {failed} 天"
+        + (
+            f"；最低 {min_rate:.2%} @ {min_rate_date}"
+            if min_rate_date is not None else ""
+        )
+    )
+
+
 def validate_stock(
     code: str,
     flows: List[FlowRow],
@@ -625,6 +717,12 @@ def run_validation(
     report = ValidationReport()
 
     with get_db() as conn:
+        if scope in ("all", "stock", "coverage"):
+            validate_flow_coverage(conn, report)
+
+        if scope == "coverage":
+            return report
+
         all_stocks = _load_stocks(conn)
         all_sectors = _load_sectors(conn)
         sector_change_logs = _load_sector_change_logs(conn, all_sectors.keys())
@@ -663,28 +761,28 @@ def run_validation(
             agg_codes |= set(sector_codes) | member_codes
         aggregations = _load_aggregations(conn, agg_codes, report)
 
-    if scope in ("all", "stock"):
-        for code in stock_codes:
-            validate_stock(
-                code,
-                flows_by_code.get(code, []),
-                aggregations.get(code, {"accumulation": [], "sliding": {w: [] for w in WINDOWS}}),
-                report,
-            )
+        if scope in ("all", "stock"):
+            for code in stock_codes:
+                validate_stock(
+                    code,
+                    flows_by_code.get(code, []),
+                    aggregations.get(code, {"accumulation": [], "sliding": {w: [] for w in WINDOWS}}),
+                    report,
+                )
 
-    if scope in ("all", "sector"):
-        for code in sector_codes:
-            members, sector_version = all_sectors.get(code, ([], 0))
-            validate_sector(
-                code,
-                members,
-                sector_version,
-                sector_change_logs.get(code, []),
-                flows_by_code,
-                aggregations,
-                aggregations.get(code, {"accumulation": [], "sliding": {w: [] for w in WINDOWS}}),
-                report,
-            )
+        if scope in ("all", "sector"):
+            for code in sector_codes:
+                members, sector_version = all_sectors.get(code, ([], 0))
+                validate_sector(
+                    code,
+                    members,
+                    sector_version,
+                    sector_change_logs.get(code, []),
+                    flows_by_code,
+                    aggregations,
+                    aggregations.get(code, {"accumulation": [], "sliding": {w: [] for w in WINDOWS}}),
+                    report,
+                )
 
     return report
 
@@ -717,8 +815,8 @@ def _print_report(report: ValidationReport, verbose: bool) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="验证 aggregation 数据完整性与正确性")
     parser.add_argument(
-        "--scope", choices=["all", "stock", "sector"], default="all",
-        help="检查范围（默认 all）",
+        "--scope", choices=["all", "stock", "sector", "coverage"], default="all",
+        help="检查范围（默认 all；coverage 仅检查 money_flows 交易日有数据率）",
     )
     parser.add_argument(
         "--code", nargs="+", metavar="CODE",
