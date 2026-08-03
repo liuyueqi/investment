@@ -2,7 +2,9 @@ from datetime import date, datetime
 from typing import List, Optional
 
 import akshare as ak
+import requests
 
+from domain.basket import Basket, BasketType
 from domain.etf import ETF
 from domain.trading_day import TradingDay
 from infra.log import logger
@@ -11,6 +13,44 @@ from .external_data_adapter import ExternalDataAdapter
 
 class AkshareAdapter(ExternalDataAdapter):
     """基于 akshare 的数据适配器"""
+
+    def get_all_indexes(self) -> List[Basket]:
+        """
+        获取国证全部指数。
+
+        接口文档: https://akshare.akfamily.xyz/data/index/index.html#id25
+        对应 ak.index_all_cni；因上游字段增减导致 akshare 列映射报错，
+        这里直连同一 URL，按字段名解析。
+        """
+        try:
+            rows = self._fetch_index_all_cni()
+            baskets: List[Basket] = []
+            for item in rows:
+                code = str(item.get("indexcode", "")).strip()
+                name = str(item.get("indexname", "")).strip()
+                if not code or not name:
+                    continue
+                baskets.append(Basket(
+                    code=code,
+                    name=name,
+                    type=BasketType.INDEX,
+                ))
+            return baskets
+        except Exception as e:
+            logger.error(f"获取全部指数失败: {e}", exc_info=True)
+            return []
+
+    def _fetch_index_all_cni(self) -> list:
+        """直连国证 indexList（与 ak.index_all_cni 同源）。"""
+        url = "https://www.cnindex.com.cn/index/indexList"
+        params = {
+            "channelCode": "-1",
+            "rows": "2000",
+            "pageNum": "1",
+        }
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        return response.json()["data"]["rows"]
 
     def get_all_trading_days(self) -> List[TradingDay]:
         """

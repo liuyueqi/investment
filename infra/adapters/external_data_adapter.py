@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 from typing import List, Dict, Optional
 
+from domain.basket import Basket
 from domain.stock import Stock
 from domain.etf import ETF
 from domain.money_flow import MoneyFlow
@@ -17,6 +18,10 @@ class ExternalDataAdapter(ABC):
 
     def get_all_etf_info(self) -> List[ETF]:
         raise NotImplementedError("get_all_etf_info 方法未实现")
+
+    def get_all_indexes(self) -> List[Basket]:
+        """获取全部指数列表"""
+        raise NotImplementedError("get_all_indexes 方法未实现")
 
     def get_all_trading_days(self) -> List[TradingDay]:
         """获取全部交易日列表"""

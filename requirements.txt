@@ -4,7 +4,7 @@ certifi==2026.6.17
 charset-normalizer==3.4.7
 decorator==5.3.1
 dependency-injector==4.49.1
-akshare>=1.14.0
+akshare>=1.16.23
 efinance==0.5.8
 idna==3.18
 jsonpath==0.82.2
