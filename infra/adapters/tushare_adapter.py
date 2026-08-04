@@ -1,16 +1,22 @@
 import math
+import re
 from pathlib import Path
 
 import tushare as ts
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
+from domain.basket import Basket, BasketType
+from domain.ts_code_util import normalize_code, to_stock_ts_code
+from domain.constituent import Constituent
 from domain.daily_quote import DailyQuote
 from domain.money_flow import MoneyFlow
-from domain.stock_code import to_ts_code
+from infra.config import get_market_earliest_date
 from infra.log import logger
 from .external_data_adapter import ExternalDataAdapter
-from domain.stock_code import normalize_code
+
+# 仅保留：① 6位数字.CSI  ⑤ 字母前缀+数字.CSI（排除币种变体）
+_CSI_PRIMARY_TS_CODE = re.compile(r'^(\d{6}|[A-Z]+\d+)\.CSI$')
 
 class TushareAdapter(ExternalDataAdapter):
     """基于 Tushare Pro 的数据适配器"""
@@ -27,6 +33,7 @@ class TushareAdapter(ExternalDataAdapter):
         token = self._load_token()
         ts.set_token(token)
         self._pro = ts.pro_api()
+        self._index_ts_code_cache: Dict[str, str] = {}
 
     def _load_token(self) -> str:
 
@@ -41,6 +48,118 @@ class TushareAdapter(ExternalDataAdapter):
         if not token:
             raise ValueError(f'Tushare token file is empty: {token_file}')
         return token
+
+    def get_all_indexes(self) -> List[Basket]:
+        """
+        获取中证（CSI）全部指数。
+
+        接口文档: https://tushare.pro/document/2?doc_id=94
+        接口: index_basic(market='CSI')
+
+        仅保留主代码：
+          - 6位数字.CSI（如 000300.CSI）
+          - 字母前缀+数字.CSI（如 H00009.CSI / CU0007.CSI）
+        带币种的衍生代码（如 000300CNY030.CSI）会被过滤。
+        """
+        try:
+            df = self._pro.index_basic(market="CSI")
+            if df is None or df.empty:
+                return []
+
+            baskets: List[Basket] = []
+            for _, row in df.iterrows():
+                ts_code = str(row.get("ts_code", "") or "").strip()
+                name = str(row.get("name", "") or "").strip()
+                if not ts_code or not name:
+                    continue
+                if not _CSI_PRIMARY_TS_CODE.match(ts_code):
+                    continue
+                code = normalize_code(ts_code.split(".")[0])
+                category = str(row.get("category", "") or "").strip()
+                baskets.append(Basket(
+                    code=code,
+                    name=name,
+                    type=BasketType.INDEX,
+                    category=category,
+                ))
+            return baskets
+        except Exception as e:
+            logger.error(f"获取中证指数列表失败: {e}", exc_info=True)
+            return []
+
+    def get_constituents_history(
+        self,
+        code: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> List[Constituent]:
+        """
+        获取指数历史成分股（平铺为 Constituent 列表）。
+
+        接口文档: https://tushare.pro/document/2?doc_id=96
+        接口: index_weight
+        start_date 为空时取 config market.earliest_date，end_date 为空时取今天。
+        """
+        try:
+            if start_date is None:
+                start_date = get_market_earliest_date()
+            if end_date is None:
+                end_date = date.today()
+
+            index_code = self._resolve_index_ts_code(code)
+            df = self._pro.index_weight(
+                index_code=index_code,
+                start_date=start_date.strftime("%Y%m%d"),
+                end_date=end_date.strftime("%Y%m%d"),
+            )
+            if df is None or df.empty:
+                return []
+
+            constituents: List[Constituent] = []
+            for _, row in df.iterrows():
+                
+                stock_code = normalize_code(
+                    str(row.get("con_code", "") or "").split(".")[0]
+                )
+                if not stock_code:
+                    continue
+
+                weight = self._to_float(row.get("weight"))
+                trade_date = datetime.strptime(
+                    str(row["trade_date"]), "%Y%m%d"
+                ).date()
+                constituents.append(Constituent(
+                    stock_code=stock_code,
+                    weight=weight,
+                    trade_date=trade_date,
+                ))
+
+            constituents.sort(key=lambda c: (c.trade_date, c.stock_code))
+            return constituents
+        except Exception as e:
+            logger.error(f"获取指数 {code} 历史成分失败: {e}", exc_info=True)
+            return []
+
+    def _resolve_index_ts_code(self, code: str) -> str:
+        """
+        通过 index_basic(symbol=...) 解析指数 ts_code，结果缓存在实例内。
+        code 为 6 位数字格式。
+
+        接口文档: https://tushare.pro/document/2?doc_id=94
+        """
+        if code in self._index_ts_code_cache:
+            return self._index_ts_code_cache[code]
+
+        df = self._pro.index_basic(symbol=code)
+        if df is None or df.empty:
+            raise ValueError(f"index_basic 未找到指数: {code}")
+
+        ts_code = str(df.iloc[0].get("ts_code", "") or "").strip()
+        if not ts_code:
+            raise ValueError(f"index_basic 返回空 ts_code: {code}")
+
+        self._index_ts_code_cache[code] = ts_code
+        return ts_code
 
     # ========== 资金流向（核心） ==========
 
@@ -63,7 +182,7 @@ class TushareAdapter(ExternalDataAdapter):
         try:
             params = {}
             if code is not None:
-                params['ts_code'] = to_ts_code(code)
+                params['ts_code'] = to_stock_ts_code(code)
             if start_date is not None:
                 params['start_date'] = start_date.strftime('%Y%m%d')
             if end_date is not None:
@@ -152,7 +271,7 @@ class TushareAdapter(ExternalDataAdapter):
         """
         try:
             results = ts.pro_bar(
-                ts_code=to_ts_code(code),
+                ts_code=to_stock_ts_code(code),
                 api=self._pro,
                 start_date=start_date.strftime('%Y%m%d'),
                 end_date=end_date.strftime('%Y%m%d'),

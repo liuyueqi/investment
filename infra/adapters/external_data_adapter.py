@@ -3,6 +3,7 @@ from datetime import date, datetime
 from typing import List, Dict, Optional
 
 from domain.basket import Basket
+from domain.constituent import Constituent
 from domain.stock import Stock
 from domain.etf import ETF
 from domain.money_flow import MoneyFlow
@@ -22,6 +23,17 @@ class ExternalDataAdapter(ABC):
     def get_all_indexes(self) -> List[Basket]:
         """获取全部指数列表"""
         raise NotImplementedError("get_all_indexes 方法未实现")
+
+    def get_constituents_history(
+        self,
+        code: str,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> List[Constituent]:
+        """获取指定指数/板块的历史成分股（平铺）。
+        start_date 为空时用 market.earliest_date，end_date 为空时用今天。
+        """
+        raise NotImplementedError("get_constituents_history 方法未实现")
 
     def get_all_trading_days(self) -> List[TradingDay]:
         """获取全部交易日列表"""

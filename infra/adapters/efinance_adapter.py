@@ -5,7 +5,7 @@ from typing import List, Dict, Optional
 from domain.stock import Stock
 from .external_data_adapter import ExternalDataAdapter
 from infra.log import logger
-from domain.stock_code import infer_market, normalize_code
+from domain.ts_code_util import infer_stock_market, normalize_code
 
 class EfinanceAdapter(ExternalDataAdapter):
     """基于 efinance 的数据适配器"""
@@ -32,7 +32,7 @@ class EfinanceAdapter(ExternalDataAdapter):
                     if code in stock_map:
                         continue
                     name = row[name_col]
-                    market = infer_market(code)
+                    market = infer_stock_market(code)
                     stock_map[code] = Stock(code=code, name=name, market=market)
                     
             except Exception as e:
