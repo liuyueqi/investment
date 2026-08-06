@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from domain.sector import Sector, SectorType
 from domain.sector_change_log import SectorChangeAction, SectorChangeLog
-from infra.adapters.external_data_adapter import ExternalDataAdapter
+from infra.adapters.efinance_adapter import EfinanceAdapter
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -18,7 +18,7 @@ class SectorRepository:
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
     _CHUNK_SIZE = 100   # 每个线程处理的股票数量
 
-    def __init__(self, adapter: ExternalDataAdapter, build_pool: ThreadPoolExecutor):
+    def __init__(self, adapter: EfinanceAdapter, build_pool: ThreadPoolExecutor):
         self._adapter = adapter
         self._lock = threading.Lock()
         self._build_pool = build_pool

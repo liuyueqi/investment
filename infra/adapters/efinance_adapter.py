@@ -3,11 +3,11 @@ from datetime import date, datetime
 from typing import List, Dict, Optional
 
 from domain.stock import Stock
-from .external_data_adapter import ExternalDataAdapter
 from infra.log import logger
 from domain.ts_code_util import infer_stock_market, normalize_code
 
-class EfinanceAdapter(ExternalDataAdapter):
+
+class EfinanceAdapter:
     """基于 efinance 的数据适配器"""
     
     def get_all_stock_info(self) -> List[Stock]:

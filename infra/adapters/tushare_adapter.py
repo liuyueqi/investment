@@ -13,12 +13,11 @@ from domain.daily_quote import DailyQuote
 from domain.money_flow import MoneyFlow
 from infra.config import get_market_earliest_date
 from infra.log import logger
-from .external_data_adapter import ExternalDataAdapter
 
 # 仅保留：① 6位数字.CSI  ⑤ 字母前缀+数字.CSI（排除币种变体）
 _CSI_PRIMARY_TS_CODE = re.compile(r'^(\d{6}|[A-Z]+\d+)\.CSI$')
 
-class TushareAdapter(ExternalDataAdapter):
+class TushareAdapter:
     """基于 Tushare Pro 的数据适配器"""
 
     _TOKEN_FILE_ENV = 'TUSHARE_TOKEN_FILE'

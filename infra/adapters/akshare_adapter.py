@@ -8,10 +8,9 @@ from domain.basket import Basket, BasketType
 from domain.etf import ETF
 from domain.trading_day import TradingDay
 from infra.log import logger
-from .external_data_adapter import ExternalDataAdapter
 
 
-class AkshareAdapter(ExternalDataAdapter):
+class AkshareAdapter:
     """基于 akshare 的数据适配器"""
 
     def get_all_indexes(self) -> List[Basket]:
