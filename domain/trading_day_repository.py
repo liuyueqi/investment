@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from domain.trading_day import TradingDay
-from infra.adapters.akshare_adapter import AkshareAdapter
+from infra.adapters.tushare_adapter import TushareAdapter
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -10,7 +10,7 @@ from infra.log import logger
 class TradingDayRepository:
     """交易日历数据仓库，管理 trading_days 表"""
 
-    def __init__(self, adapter: AkshareAdapter):
+    def __init__(self, adapter: TushareAdapter):
         self._adapter = adapter
 
     def refresh(self, incr: bool = True, force: bool = False) -> None:

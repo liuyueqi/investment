@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from domain.stock import Stock
-from infra.adapters.efinance_adapter import EfinanceAdapter
+from infra.adapters.tushare_adapter import TushareAdapter
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -13,7 +13,7 @@ class StockRepository:
 
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
     
-    def __init__(self, adapter: EfinanceAdapter):
+    def __init__(self, adapter: TushareAdapter):
         self._adapter = adapter
 
     def refresh(self, force: bool = False) -> None:
@@ -45,7 +45,7 @@ class StockRepository:
 
     def _update_from_adapter(self) -> None:
         """从适配器获取全市场股票，增量更新到数据库"""
-        stocks = self._adapter.get_all_stock_info()
+        stocks = self._adapter.get_all_stocks()
         if not stocks:
             logger.warning("获取股票列表失败")
             return

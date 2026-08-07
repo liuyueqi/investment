@@ -19,11 +19,6 @@ from domain.downloader import Downloader
 class AppContainer(containers.DeclarativeContainer):
     """应用容器：管理所有组件的生命周期和依赖"""
 
-    # ── 适配器（单例） ────────────────────────────────────────
-    efinance_adapter = providers.Singleton(EfinanceAdapter)
-    tushare_adapter = providers.Singleton(TushareAdapter)
-    akshare_adapter = providers.Singleton(AkshareAdapter)
-
     # ── 线程池（单例） ──────────────────────────────────────
     default_pool = providers.Singleton(
         ThreadPoolExecutor,
@@ -43,10 +38,18 @@ class AppContainer(containers.DeclarativeContainer):
         thread_name_prefix="SectorCalcPool",
     )
 
+    # ── 适配器（单例） ────────────────────────────────────────
+    efinance_adapter = providers.Singleton(EfinanceAdapter)
+    tushare_adapter = providers.Singleton(
+        TushareAdapter,
+        default_pool=default_pool,
+    )
+    akshare_adapter = providers.Singleton(AkshareAdapter)
+
     # ── Repository（单例，自动注入 adapter） ─────────────────
     stock_repo = providers.Singleton(
         StockRepository,
-        adapter=efinance_adapter,
+        adapter=tushare_adapter,
     )
 
     sector_repo = providers.Singleton(
@@ -69,7 +72,7 @@ class AppContainer(containers.DeclarativeContainer):
 
     trading_day_repo = providers.Singleton(
         TradingDayRepository,
-        adapter=akshare_adapter,
+        adapter=tushare_adapter,
     )
 
     money_flow_aggregation_repo = providers.Singleton(

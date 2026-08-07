@@ -62,7 +62,7 @@ class MoneyFlowRepository:
     def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
         """从适配器获取资金流向数据，增量更新到数据库"""
         if stock_codes is None:
-            stocks = self._stock_adapter.get_all_stock_info()
+            stocks = self._stock_adapter.get_all_stocks()
             stock_codes = [stock.code for stock in stocks]
 
         if not stock_codes:

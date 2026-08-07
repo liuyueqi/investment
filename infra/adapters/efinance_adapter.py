@@ -10,8 +10,8 @@ from domain.ts_code_util import infer_stock_market, normalize_code
 class EfinanceAdapter:
     """基于 efinance 的数据适配器"""
     
-    def get_all_stock_info(self) -> List[Stock]:
-        """通过上证指数 + 深证综指获取沪深全部股票信息"""
+    def get_all_stocks(self) -> List[Stock]:
+        """通过中证全指成分获取沪深京股票信息"""
         stock_map = {}  # 用字典去重（代码 -> Stock）
         
         index_codes = ['000985']

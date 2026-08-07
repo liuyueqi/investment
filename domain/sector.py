@@ -10,6 +10,7 @@ class SectorType(Enum):
     CONCEPT = "概念"
     REGION = "地区"
     STYLE = "风格"
+    UNKNOWN = "UNKNOWN"
 
 
 @dataclass

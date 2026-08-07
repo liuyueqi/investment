@@ -54,7 +54,7 @@ class SectorRepository:
     def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
         """从适配器获取板块数据，并发处理各股票所属板块"""
         if stock_codes is None:
-            stocks = self._adapter.get_all_stock_info()
+            stocks = self._adapter.get_all_stocks()
             stock_codes = [stock.code for stock in stocks]
 
         if not stock_codes:

@@ -1,5 +1,7 @@
 import math
 import re
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import tushare as ts
@@ -7,7 +9,10 @@ from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from domain.basket import Basket, BasketType
-from domain.ts_code_util import normalize_code, to_stock_ts_code
+from domain.sector import Sector, SectorType
+from domain.stock import Stock
+from domain.trading_day import TradingDay
+from domain.ts_code_util import infer_stock_market, normalize_code, to_stock_ts_code
 from domain.constituent import Constituent
 from domain.daily_quote import DailyQuote
 from domain.money_flow import MoneyFlow
@@ -16,6 +21,17 @@ from infra.log import logger
 
 # 仅保留：① 6位数字.CSI  ⑤ 字母前缀+数字.CSI（排除币种变体）
 _CSI_PRIMARY_TS_CODE = re.compile(r'^(\d{6}|[A-Z]+\d+)\.CSI$')
+_DC_IDX_TYPE_MAP = {
+    "概念板块": SectorType.CONCEPT,
+    "行业板块": SectorType.INDUSTRY,
+    "地域板块": SectorType.REGION,
+    "风格板块": SectorType.STYLE,
+}
+_EXCHANGE_TO_MARKET = {
+    "SSE": "SH",
+    "SZSE": "SZ",
+    "BSE": "BJ",
+}
 
 class TushareAdapter:
     """基于 Tushare Pro 的数据适配器"""
@@ -23,15 +39,16 @@ class TushareAdapter:
     _TOKEN_FILE_ENV = 'TUSHARE_TOKEN_FILE'
     _DEFAULT_TOKEN_FILE = Path(".tushare_token")
 
-    def __init__(self):
+    def __init__(self, default_pool: ThreadPoolExecutor):
         """
         初始化 Tushare 适配器
         Args:
-            token_file: 可选的 Tushare Token 文件路径。优先级：参数 > 环境变量 TUSHARE_TOKEN_FILE > 项目根目录下 .tushare_token
+            default_pool: 共享线程池（用于并行拉取板块成分等）
         """
         token = self._load_token()
         ts.set_token(token)
         self._pro = ts.pro_api()
+        self._default_pool = default_pool
         self._index_ts_code_cache: Dict[str, str] = {}
 
     def _load_token(self) -> str:
@@ -47,6 +64,67 @@ class TushareAdapter:
         if not token:
             raise ValueError(f'Tushare token file is empty: {token_file}')
         return token
+
+    def get_all_stocks(self) -> List[Stock]:
+        """
+            获取上市股票基础信息列表。
+
+            接口文档: https://tushare.pro/document/2?doc_id=25
+            接口: stock_basic(list_status='L')
+        """
+        try:
+            df = self._pro.stock_basic(
+                list_status="L",
+                fields="ts_code,symbol,name,exchange,market",
+            )
+            if df is None or df.empty:
+                return []
+
+            stocks: List[Stock] = []
+            for _, row in df.iterrows():
+                symbol = str(row.get("symbol", "") or "").strip()
+                name = str(row.get("name", "") or "").strip()
+                if not symbol or not name:
+                    continue
+                code = normalize_code(symbol)
+                exchange = str(row.get("exchange", "") or "").strip().upper()
+                market = _EXCHANGE_TO_MARKET.get(exchange) or infer_stock_market(code)
+                stocks.append(Stock(code=code, name=name, market=market))
+            return stocks
+        except Exception as e:
+            logger.error(f"获取股票列表失败: {e}", exc_info=True)
+            return []
+
+    def get_all_trading_days(self) -> List[TradingDay]:
+        """
+            获取 A 股交易日历（仅交易日）。
+
+            接口文档: https://tushare.pro/document/2?doc_id=26
+            接口: trade_cal(is_open='1')
+        """
+        try:
+            end_date = date(date.today().year + 1, 12, 31)
+            df = self._pro.trade_cal(
+                exchange="SSE",
+                start_date="19900101",
+                end_date=end_date.strftime("%Y%m%d"),
+                is_open="1",
+            )
+            if df is None or df.empty:
+                return []
+
+            trading_days: List[TradingDay] = []
+            for _, row in df.iterrows():
+                raw = str(row.get("cal_date", "") or "").strip()
+                if not raw:
+                    continue
+                trade_date = datetime.strptime(raw[:8], "%Y%m%d").date()
+                trading_days.append(TradingDay(trade_date=trade_date))
+            trading_days.sort(key=lambda d: d.trade_date)
+            return trading_days
+        except Exception as e:
+            logger.error(f"获取交易日历失败: {e}", exc_info=True)
+            return []
 
     def get_all_indexes(self) -> List[Basket]:
         """
@@ -85,6 +163,145 @@ class TushareAdapter:
         except Exception as e:
             logger.error(f"获取中证指数列表失败: {e}", exc_info=True)
             return []
+
+    def get_all_sectors(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> Dict[date, List[Sector]]:
+        """
+            按 dc_index 的 trade_date 返回板块快照；成分由 dc_member 并行拉取。
+
+            成分接口: dc_member（doc_id=363）
+            板块列表: dc_index（doc_id=362）
+            start_date 为空时取 market.earliest_date，end_date 为空时取今天。
+        """
+        try:
+            if start_date is None:
+                start_date = get_market_earliest_date()
+            if end_date is None:
+                end_date = date.today()
+            if start_date > end_date:
+                logger.warning(
+                    f"板块查询 start_date {start_date} > end_date {end_date}，返回空"
+                )
+                return {}
+
+            rows = self._load_dc_sector_rows(
+                start_date.strftime("%Y%m%d"),
+                end_date.strftime("%Y%m%d"),
+            )
+            if not rows:
+                return {}
+
+            member_start = rows[0][0]
+            member_end = rows[-1][0]
+            unique_codes = {sector.code for _, sector in rows}
+
+            members_by_code: Dict[str, Dict[date, set[str]]] = {}
+            futures = {
+                self._default_pool.submit(
+                    self._fetch_dc_members, code, member_start, member_end,
+                ): code
+                for code in unique_codes
+            }
+            for future in as_completed(futures):
+                code = futures[future]
+                try:
+                    sector_code, by_date = future.result()
+                    members_by_code[sector_code] = by_date
+                except Exception as e:
+                    logger.error(
+                        f"dc_member 并行任务失败 sector={code}: {e}",
+                        exc_info=True,
+                    )
+
+            by_date: Dict[date, List[Sector]] = defaultdict(list)
+            for trade_date, sector in rows:
+                members = members_by_code.get(sector.code, {}).get(trade_date)
+                if members:
+                    sector.members = list(members)
+                by_date[trade_date].append(sector)
+
+            return {
+                trade_d: sorted(sectors, key=lambda s: s.code)
+                for trade_d, sectors in sorted(by_date.items(), key=lambda x: x[0])
+            }
+        except Exception as e:
+            logger.error(f"获取东财板块失败: {e}", exc_info=True)
+            return {}
+
+    def _load_dc_sector_rows(
+        self,
+        start_str: str,
+        end_str: str,
+    ) -> List[tuple[date, Sector]]:
+        """
+            东财 dc_index 按日期范围拉取全部板块，按 trade_date 升序返回。
+        """
+        
+        df = self._pro.dc_index(start_date=start_str, end_date=end_str)
+        if df is None or df.empty:
+            return []
+
+        rows: List[tuple[date, Sector]] = []
+        for _, row in df.iterrows():
+            trade_date_raw = str(row.get("trade_date", "") or "").strip()
+            ts_code = str(row.get("ts_code", "") or "").strip()
+            name = str(row.get("name", "") or "").strip()
+            if not trade_date_raw or not ts_code or not name:
+                continue
+       
+            trade_date = datetime.strptime(trade_date_raw[:8], "%Y%m%d").date()
+            idx_type_raw = str(row.get("idx_type", "") or "").strip()
+            sector_type = _DC_IDX_TYPE_MAP.get(idx_type_raw, SectorType.UNKNOWN)
+            rows.append((
+                trade_date,
+                Sector(
+                    code=self._normalize_dc_sector_code(ts_code),
+                    name=name,
+                    type=sector_type,
+                ),
+            ))
+
+        rows.sort(key=lambda item: (item[0], item[1].code))
+        return rows
+
+    def _fetch_dc_members(
+        self,
+        sector_code: str,
+        start_date: date,
+        end_date: date,
+    ) -> tuple[str, Dict[date, set[str]]]:
+        """
+            按板块代码拉取区间成分，按 trade_date 聚合为 set。
+        """
+        
+        ts_code = f"{sector_code}.DC"
+        df = self._pro.dc_member(
+            ts_code=ts_code,
+            start_date=start_date.strftime("%Y%m%d"),
+            end_date=end_date.strftime("%Y%m%d"),
+        )
+        by_date: Dict[date, set[str]] = defaultdict(set)
+        if df is None or df.empty:
+            return sector_code, {}
+
+        for _, row in df.iterrows():
+            trade_date_raw = str(row.get("trade_date", "") or "").strip()
+            if not trade_date_raw:
+                continue
+            trade_date = datetime.strptime(trade_date_raw[:8], "%Y%m%d").date()
+            stock_code = normalize_code(
+                str(row.get("con_code", "") or "").split(".")[0]
+            )
+            if stock_code:
+                by_date[trade_date].add(stock_code)
+        return sector_code, dict(by_date)
+
+    def _normalize_dc_sector_code(self, ts_code: str) -> str:
+        """BK1184.DC -> BK1184"""
+        return ts_code.split(".", 1)[0].strip()
 
     def get_constituents_history(
         self,
