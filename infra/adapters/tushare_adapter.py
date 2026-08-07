@@ -168,7 +168,7 @@ class TushareAdapter:
         self,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-    ) -> Dict[date, List[Sector]]:
+    ) -> List[tuple[date, Sector]]:
         """
             按 dc_index 的 trade_date 返回板块快照；成分由 dc_member 并行拉取。
 
@@ -185,14 +185,14 @@ class TushareAdapter:
                 logger.warning(
                     f"板块查询 start_date {start_date} > end_date {end_date}，返回空"
                 )
-                return {}
+                return []
 
             rows = self._load_dc_sector_rows(
                 start_date.strftime("%Y%m%d"),
                 end_date.strftime("%Y%m%d"),
             )
             if not rows:
-                return {}
+                return []
 
             member_start = rows[0][0]
             member_end = rows[-1][0]
@@ -208,28 +208,23 @@ class TushareAdapter:
             for future in as_completed(futures):
                 code = futures[future]
                 try:
-                    sector_code, by_date = future.result()
-                    members_by_code[sector_code] = by_date
+                    members_by_code[code] = future.result()
                 except Exception as e:
                     logger.error(
                         f"dc_member 并行任务失败 sector={code}: {e}",
                         exc_info=True,
                     )
 
-            by_date: Dict[date, List[Sector]] = defaultdict(list)
+            result: List[tuple[date, Sector]] = []
             for trade_date, sector in rows:
                 members = members_by_code.get(sector.code, {}).get(trade_date)
                 if members:
                     sector.members = list(members)
-                by_date[trade_date].append(sector)
-
-            return {
-                trade_d: sorted(sectors, key=lambda s: s.code)
-                for trade_d, sectors in sorted(by_date.items(), key=lambda x: x[0])
-            }
+                result.append((trade_date, sector))
+            return result
         except Exception as e:
             logger.error(f"获取东财板块失败: {e}", exc_info=True)
-            return {}
+            return []
 
     def _load_dc_sector_rows(
         self,
@@ -272,7 +267,7 @@ class TushareAdapter:
         sector_code: str,
         start_date: date,
         end_date: date,
-    ) -> tuple[str, Dict[date, set[str]]]:
+    ) -> Dict[date, set[str]]:
         """
             按板块代码拉取区间成分，按 trade_date 聚合为 set。
         """
@@ -285,7 +280,7 @@ class TushareAdapter:
         )
         by_date: Dict[date, set[str]] = defaultdict(set)
         if df is None or df.empty:
-            return sector_code, {}
+            return {}
 
         for _, row in df.iterrows():
             trade_date_raw = str(row.get("trade_date", "") or "").strip()
@@ -297,7 +292,7 @@ class TushareAdapter:
             )
             if stock_code:
                 by_date[trade_date].add(stock_code)
-        return sector_code, dict(by_date)
+        return dict(by_date)
 
     def _normalize_dc_sector_code(self, ts_code: str) -> str:
         """BK1184.DC -> BK1184"""
