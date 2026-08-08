@@ -17,7 +17,7 @@ class SectorChangeLog:
     """
         板块变更记录
     """
-    
+
     sector_code: str
     action: SectorChangeAction
     old_value: str = ""

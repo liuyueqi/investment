@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from domain.sector import Sector, SectorType
-from domain.sector_change_log import SectorChangeAction, SectorChangeLog
+from domain.sector_change_log import SectorChangeLog
+from domain.sector_history import SectorHistory
 from infra.adapters.efinance_adapter import EfinanceAdapter
 from infra.database.connection import get_db
 from infra.log import logger
@@ -181,43 +182,7 @@ class SectorRepository:
         return sectors
 
     def _compute_change_logs(self, old: Sector, new: Sector) -> List[SectorChangeLog]:
-        logs: List[SectorChangeLog] = []
-        version = new.version
-
-        if old.name != new.name:
-            logs.append(SectorChangeLog(
-                sector_code=new.code,
-                action=SectorChangeAction.MODIFY_NAME,
-                old_value=old.name,
-                new_value=new.name,
-                version=version,
-            ))
-        if old.type != new.type:
-            logs.append(SectorChangeLog(
-                sector_code=new.code,
-                action=SectorChangeAction.MODIFY_TYPE,
-                old_value=old.type.value,
-                new_value=new.type.value,
-                version=version,
-            ))
-
-        old_members = set(old.members)
-        new_members = set(new.members)
-        for stock_code in sorted(new_members - old_members):
-            logs.append(SectorChangeLog(
-                sector_code=new.code,
-                action=SectorChangeAction.ADD_MEMBER,
-                new_value=stock_code,
-                version=version,
-            ))
-        for stock_code in sorted(old_members - new_members):
-            logs.append(SectorChangeLog(
-                sector_code=new.code,
-                action=SectorChangeAction.REMOVE_MEMBER,
-                old_value=stock_code,
-                version=version,
-            ))
-        return logs
+        return SectorHistory.compute_change_logs(old, new, version=new.version)
 
     def _delete_sector_and_members(self, conn, code: str) -> None:
         conn.execute("DELETE FROM sector_members WHERE sector_code = ?", (code,))
