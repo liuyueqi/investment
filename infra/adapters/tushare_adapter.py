@@ -5,9 +5,10 @@ from pathlib import Path
 from time import sleep
 
 import tushare as ts
-from datetime import date, datetime, timedelta
-from typing import Dict, Iterator, List, Optional, Tuple
+from datetime import date, datetime
+from typing import Dict, List, Optional, Tuple
 
+from common.date_util import iter_day_ranges, iter_fortnight_ranges, iter_week_ranges
 from domain.basket import Basket, BasketType
 from domain.sector import Sector, SectorType
 from domain.stock import Stock
@@ -16,6 +17,7 @@ from domain.constituent import Constituent
 from domain.daily_quote import DailyQuote
 from domain.money_flow import MoneyFlow
 from infra.config import get_market_earliest_date
+from infra.database.tushare_data import DCSectorData, DCSectorMemberData
 from infra.log import logger
 
 # 仅保留：① 6位数字.CSI  ⑤ 字母前缀+数字.CSI（排除币种变体）
@@ -184,7 +186,7 @@ class TushareAdapter:
             logger.info(f"拉取板块列表: start_date: {start_date}, end_date: {end_date}")
             
             rows: List[tuple[date, Sector]] = []
-            for week_start, week_end in self._iter_week_ranges(start_date, end_date):
+            for week_start, week_end in iter_week_ranges(start_date, end_date):
                 
                 logger.info(f"分周拉取板块列表: {week_start} ~ {week_end}")
                 week_rows = self._fetch_sectors(week_start, week_end)
@@ -192,7 +194,7 @@ class TushareAdapter:
                 if len(week_rows) >= self._DC_INDEX_ROW_LIMIT:
                     logger.warning(f"分周结果达到上限 {len(week_rows)} 条，改为按日重拉: {week_start} ~ {week_end}")
                     week_rows = []
-                    for day_start, day_end in self._iter_day_ranges(week_start, week_end):
+                    for day_start, day_end in iter_day_ranges(week_start, week_end):
                         day_rows = self._fetch_sectors(day_start, day_end)
                         logger.info(f"分日拉取完成: {day_start}, 当日 {len(day_rows)} 条")
                         week_rows.extend(day_rows)
@@ -218,14 +220,14 @@ class TushareAdapter:
                 try:
                     logger.info(f"{seq}: 按双周拉取板块成分: {code}, {member_start} ~ {member_end}")
                     member_rows: List[tuple[date, str]] = []
-                    for batch_start, batch_end in self._iter_fortnight_ranges(member_start, member_end):
+                    for batch_start, batch_end in iter_fortnight_ranges(member_start, member_end):
                         batch_rows = self._fetch_sector_members(code, batch_start, batch_end)
                         if len(batch_rows) >= self._DC_MEMBER_ROW_LIMIT:
                             logger.warning(
                                 f"dc_member 双周结果达到上限 {len(batch_rows)} 条，改为按日重拉: {code}, {batch_start} ~ {batch_end}"
                             )
                             batch_rows = []
-                            for day_start, day_end in self._iter_day_ranges(batch_start, batch_end):
+                            for day_start, day_end in iter_day_ranges(batch_start, batch_end):
                                 day_rows = self._fetch_sector_members(code, day_start, day_end)
                                 logger.info(f"分日拉取成分完成: {code}, {day_start}, 当日 {len(day_rows)} 只")
                                 batch_rows.extend(day_rows)
@@ -252,47 +254,75 @@ class TushareAdapter:
             logger.error(f"获取东财板块失败: {e}", exc_info=True)
             return []
 
-    def _iter_week_ranges(
-        self,
-        start_date: date,
-        end_date: date,
-    ) -> Iterator[Tuple[date, date]]:
-        """将 [start_date, end_date] 按自然周（周一至周日）切分为闭区间。"""
-        # weekday(): Mon=0 ... Sun=6
-        cursor = start_date - timedelta(days=start_date.weekday())
-        while cursor <= end_date:
-            week_end = cursor + timedelta(days=6)
-            range_start = max(start_date, cursor)
-            range_end = min(end_date, week_end)
-            if range_start <= range_end:
-                yield range_start, range_end
-            cursor = week_end + timedelta(days=1)
+    def get_sector_data(self, trade_date: date) -> List[DCSectorData]:
+        """
+            按单日拉取东财板块行情（dc_index）。
 
-    def _iter_day_ranges(
-        self,
-        start_date: date,
-        end_date: date,
-    ) -> Iterator[Tuple[date, date]]:
-        """将 [start_date, end_date] 按自然日切分为闭区间（每日一段）。"""
-        cursor = start_date
-        while cursor <= end_date:
-            yield cursor, cursor
-            cursor += timedelta(days=1)
+            接口文档: https://tushare.pro/document/2?doc_id=362
+        """
+        df = self._pro.dc_index(trade_date=trade_date.strftime("%Y%m%d"))
+        if df is None or df.empty:
+            return []
 
-    def _iter_fortnight_ranges(
+        rows: List[DCSectorData] = []
+        for _, row in df.iterrows():
+            trade_date_raw = str(row.get("trade_date", "") or "").strip()
+            ts_code = str(row.get("ts_code", "") or "").strip()
+            name = str(row.get("name", "") or "").strip()
+            if not trade_date_raw or not ts_code or not name:
+                continue
+            rows.append(DCSectorData(
+                ts_code=ts_code,
+                trade_date=datetime.strptime(trade_date_raw[:8], "%Y%m%d").date(),
+                name=name,
+                leading=str(row.get("leading", "") or "").strip(),
+                leading_code=str(row.get("leading_code", "") or "").strip(),
+                pct_change=self._to_float(row.get("pct_change")),
+                leading_pct=self._to_float(row.get("leading_pct")),
+                total_mv=self._to_float(row.get("total_mv")),
+                turnover_rate=self._to_float(row.get("turnover_rate")),
+                up_num=int(self._to_float(row.get("up_num"))),
+                down_num=int(self._to_float(row.get("down_num"))),
+                idx_type=str(row.get("idx_type", "") or "").strip(),
+                level=str(row.get("level", "") or "").strip(),
+            ))
+        return rows
+
+    def get_sector_members_data(
         self,
+        ts_code: str,
         start_date: date,
         end_date: date,
-    ) -> Iterator[Tuple[date, date]]:
-        """将 [start_date, end_date] 按双周（连续两个自然周，周一至周日）切分为闭区间。"""
-        cursor = start_date - timedelta(days=start_date.weekday())
-        while cursor <= end_date:
-            fortnight_end = cursor + timedelta(days=13)
-            range_start = max(start_date, cursor)
-            range_end = min(end_date, fortnight_end)
-            if range_start <= range_end:
-                yield range_start, range_end
-            cursor = fortnight_end + timedelta(days=1)
+    ) -> List[DCSectorMemberData]:
+        """
+            按区间拉取东财板块成分（dc_member）。
+
+            接口文档: https://tushare.pro/document/2?doc_id=363
+        """
+        df = self._pro.dc_member(
+            ts_code=ts_code,
+            start_date=start_date.strftime("%Y%m%d"),
+            end_date=end_date.strftime("%Y%m%d"),
+        )
+        if df is None or df.empty:
+            logger.warning(f"dc_member 无数据: ts_code={ts_code}, {start_date} ~ {end_date}")
+            return []
+
+        rows: List[DCSectorMemberData] = []
+        for _, row in df.iterrows():
+            trade_date_raw = str(row.get("trade_date", "") or "").strip()
+            con_code = str(row.get("con_code", "") or "").strip()
+            name = str(row.get("name", "") or "").strip()
+            if not trade_date_raw or not con_code:
+                continue
+            rows.append(DCSectorMemberData(
+                trade_date=datetime.strptime(trade_date_raw[:8], "%Y%m%d").date(),
+                ts_code=str(row.get("ts_code", "") or ts_code).strip() or ts_code,
+                con_code=con_code,
+                name=name,
+            ))
+        logger.info(f"dc_member 拉取: ts_code={ts_code}, {start_date} ~ {end_date}, 共 {len(rows)} 条")
+        return rows
 
     def _fetch_sectors(
         self,

@@ -3,12 +3,14 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
+from common.date_util import iter_day_ranges, iter_week_ranges
 from domain.sector import Sector, SectorType
 from domain.sector_change_log import SectorChangeAction, SectorChangeLog
 from domain.sector_history import SectorHistory
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
+from infra.database.tushare_data import DCSectorData, DCSectorMemberData
 from infra.log import logger
 
 
@@ -25,7 +27,9 @@ class SectorRepository:
         if not force and self._latest():
             logger.info("数据库缓存有效，跳过刷新")
             return
-        self._update_from_adapter()
+        # self._update_from_adapter()
+        self._update_sector_data()
+        self._update_sector_members_data()
 
     def _latest(self) -> bool:
         """检查数据库中是否有在缓存有效期内的数据"""
@@ -61,6 +65,154 @@ class SectorRepository:
             for group in by_code.values()
         ]
         self._save_histories(histories)
+
+    def _update_sector_data(self) -> None:
+        """增量同步东财板块行情到 dc_sectors。"""
+        latest_date = self._load_latest_dc_sector_date()
+        start_date = latest_date if latest_date else get_market_earliest_date()
+        end_date = date.today()
+        if start_date >= end_date:
+            logger.info(f"dc_sectors 已覆盖至 {start_date}，无需拉取")
+            return
+
+        logger.info(f"按日拉取 dc_index: {start_date} ~ {end_date}")
+        total = 0
+        for day, _ in iter_day_ranges(start_date, end_date):
+            day_rows = self._adapter.get_sector_data(day)
+            logger.info(f"dc_index 分日拉取完成: {day}, 当日 {len(day_rows)} 条")
+            if day_rows:
+                self._save_dc_sectors(day_rows)
+                total += len(day_rows)
+            time.sleep(0.1)
+        logger.info(f"dc_sectors 增量写入完成: {start_date} ~ {end_date}, 共 {total} 条")
+
+    def _load_latest_dc_sector_date(self) -> Optional[date]:
+        with get_db() as conn:
+            row = conn.execute(
+                """SELECT MAX(trade_date) AS max_date
+                   FROM dc_sectors
+                   WHERE is_deleted = 0"""
+            ).fetchone()
+        if row is None or row["max_date"] is None:
+            return None
+        return datetime.strptime(row["max_date"], "%Y-%m-%d").date()
+
+    def _save_dc_sectors(self, rows: List[DCSectorData]) -> None:
+        if not rows:
+            return
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with get_db() as conn:
+            conn.executemany(
+                """INSERT INTO dc_sectors (
+                       ts_code, trade_date, name, leading, leading_code,
+                       pct_change, leading_pct, total_mv, turnover_rate,
+                       up_num, down_num, idx_type, level,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(ts_code, trade_date) DO UPDATE SET
+                       name = excluded.name,
+                       leading = excluded.leading,
+                       leading_code = excluded.leading_code,
+                       pct_change = excluded.pct_change,
+                       leading_pct = excluded.leading_pct,
+                       total_mv = excluded.total_mv,
+                       turnover_rate = excluded.turnover_rate,
+                       up_num = excluded.up_num,
+                       down_num = excluded.down_num,
+                       idx_type = excluded.idx_type,
+                       level = excluded.level,
+                       updated_at = excluded.updated_at,
+                       is_deleted = 0""",
+                [
+                    (
+                        item.ts_code,
+                        item.trade_date.isoformat(),
+                        item.name,
+                        item.leading,
+                        item.leading_code,
+                        item.pct_change,
+                        item.leading_pct,
+                        item.total_mv,
+                        item.turnover_rate,
+                        item.up_num,
+                        item.down_num,
+                        item.idx_type,
+                        item.level,
+                        now,
+                        now,
+                    )
+                    for item in rows
+                ],
+            )
+
+    def _update_sector_members_data(self) -> None:
+        """增量同步东财板块成分到 dc_sector_members。"""
+        latest_date_by_code = self._load_latest_dc_sector_dates_by_code()
+        if not latest_date_by_code:
+            logger.warning("dc_sectors 无数据，跳过成分拉取")
+            return
+
+        end_date = date.today()
+        logger.info(f"按周拉取 dc_member: 共 {len(latest_date_by_code)} 个板块, 截止 {end_date}")
+
+        total = 0
+        for seq, (ts_code, latest_date) in enumerate(sorted(latest_date_by_code.items())):
+            start_date = latest_date if latest_date else get_market_earliest_date()
+            if start_date >= end_date:
+                logger.info(f"{seq}: {ts_code} 成分已覆盖至 {start_date}，跳过")
+                continue
+
+            logger.info(f"{seq}: 按周拉取板块成分: {ts_code}, {start_date} ~ {end_date}")
+            for week_start, week_end in iter_week_ranges(start_date, end_date):
+                week_rows = self._adapter.get_sector_members_data(ts_code, week_start, week_end)
+                if week_rows:
+                    self._save_dc_sector_members(week_rows)
+                    total += len(week_rows)
+                time.sleep(0.1)
+        logger.info(f"dc_sector_members 增量写入完成: 共 {total} 条")
+
+    def _load_latest_dc_sector_dates_by_code(self) -> Dict[str, date]:
+        """查询 dc_sectors，按 ts_code 分组取各板块最新 trade_date。"""
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT ts_code, MAX(trade_date) AS max_date
+                   FROM dc_sectors
+                   WHERE is_deleted = 0
+                   GROUP BY ts_code"""
+            ).fetchall()
+        result: Dict[str, date] = {}
+        for row in rows:
+            if row["max_date"] is None:
+                continue
+            result[row["ts_code"]] = datetime.strptime(row["max_date"], "%Y-%m-%d").date()
+        return result
+
+    def _save_dc_sector_members(self, rows: List[DCSectorMemberData]) -> None:
+        if not rows:
+            return
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with get_db() as conn:
+            conn.executemany(
+                """INSERT INTO dc_sector_members (
+                       trade_date, ts_code, con_code, name,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(trade_date, ts_code, con_code) DO UPDATE SET
+                       name = excluded.name,
+                       updated_at = excluded.updated_at,
+                       is_deleted = 0""",
+                [
+                    (
+                        item.trade_date.isoformat(),
+                        item.ts_code,
+                        item.con_code,
+                        item.name,
+                        now,
+                        now,
+                    )
+                    for item in rows
+                ],
+            )
 
     def _min_sector_updated_date(self) -> Optional[date]:
         """各板块最新更新时间中的最早值；无数据返回 None。"""

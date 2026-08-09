@@ -125,6 +125,43 @@ CREATE TABLE IF NOT EXISTS trading_days (
 );
 """
 
+# 东财概念板块行情（Tushare dc_index / DCSectorData）
+CREATE_DC_SECTORS_TABLE = """
+CREATE TABLE IF NOT EXISTS dc_sectors (
+    ts_code         TEXT NOT NULL,      -- 概念代码
+    trade_date      TEXT NOT NULL,      -- 交易日期
+    name            TEXT NOT NULL,      -- 概念名称
+    leading         TEXT NOT NULL DEFAULT '',  -- 领涨股票名称
+    leading_code    TEXT NOT NULL DEFAULT '',  -- 领涨股票代码
+    pct_change      REAL NOT NULL DEFAULT 0.0, -- 涨跌幅
+    leading_pct     REAL NOT NULL DEFAULT 0.0, -- 领涨股票涨跌幅
+    total_mv        REAL NOT NULL DEFAULT 0.0, -- 总市值（万元）
+    turnover_rate   REAL NOT NULL DEFAULT 0.0, -- 换手率
+    up_num          INTEGER NOT NULL DEFAULT 0, -- 上涨家数
+    down_num        INTEGER NOT NULL DEFAULT 0, -- 下降家数
+    idx_type        TEXT NOT NULL DEFAULT '',  -- 板块类型
+    level           TEXT NOT NULL DEFAULT '',  -- 行业层级
+    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    is_deleted      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (ts_code, trade_date)
+);
+"""
+
+# 东财概念板块成分（Tushare dc_member / DCSectorMemberData）
+CREATE_DC_SECTOR_MEMBERS_TABLE = """
+CREATE TABLE IF NOT EXISTS dc_sector_members (
+    trade_date  TEXT NOT NULL,          -- 交易日期
+    ts_code     TEXT NOT NULL,          -- 概念代码
+    con_code    TEXT NOT NULL,          -- 成分代码
+    name        TEXT NOT NULL DEFAULT '', -- 成分股名称
+    created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    is_deleted  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (trade_date, ts_code, con_code)
+);
+"""
+
 # 资金流聚合数据（与原始 money_flows 数据分离，按 code + start_date + end_date + is_accumulative 唯一标识）
 CREATE_MONEY_FLOW_AGGREGATION_TABLE = """
 CREATE TABLE IF NOT EXISTS money_flow_aggregation (
@@ -181,7 +218,11 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_sector_members_stock ON sector_members(stock_code);",
     "CREATE INDEX IF NOT EXISTS idx_sectors_sign ON sectors(sign);",
     "CREATE INDEX IF NOT EXISTS idx_sector_change_logs_sector_version ON sector_change_logs(sector_code, version);",
-    "CREATE INDEX IF NOT EXISTS idx_money_flow_agg_code_tra ON money_flow_aggregation(code, trading_days, is_accumulative);"
+    "CREATE INDEX IF NOT EXISTS idx_money_flow_agg_code_tra ON money_flow_aggregation(code, trading_days, is_accumulative);",
+    "CREATE INDEX IF NOT EXISTS idx_dc_sectors_date ON dc_sectors(trade_date);",
+    "CREATE INDEX IF NOT EXISTS idx_dc_sectors_type ON dc_sectors(idx_type);",
+    "CREATE INDEX IF NOT EXISTS idx_dc_sector_members_code_date ON dc_sector_members(ts_code, trade_date);",
+    "CREATE INDEX IF NOT EXISTS idx_dc_sector_members_con ON dc_sector_members(con_code);",
 ]
 
 
@@ -204,6 +245,8 @@ def init_db() -> None:
         conn.execute(CREATE_MONEY_FLOWS_TABLE)
         conn.execute(CREATE_DAILY_QUOTES_TABLE)
         conn.execute(CREATE_TRADING_DAYS_TABLE)
+        conn.execute(CREATE_DC_SECTORS_TABLE)
+        conn.execute(CREATE_DC_SECTOR_MEMBERS_TABLE)
         conn.execute(CREATE_MONEY_FLOW_AGGREGATION_TABLE)
         for table, column in [
             ("stocks", "ts_code TEXT"),
