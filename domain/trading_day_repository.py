@@ -1,7 +1,6 @@
 from datetime import date, datetime
 from typing import List, Optional
 
-from domain.trading_day import TradingDay
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.database.connection import get_db
 from infra.log import logger
@@ -49,9 +48,9 @@ class TradingDayRepository:
             return None
         return datetime.strptime(row["max_date"], "%Y-%m-%d").date()
 
-    def _replace_all(self, trading_days: List[TradingDay]) -> None:
+    def _replace_all(self, trading_days: List[date]) -> None:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        rows = [(day.trade_date.isoformat(), now, now) for day in trading_days]
+        rows = [(day.isoformat(), now, now) for day in trading_days]
         with get_db() as conn:
             conn.execute("DELETE FROM trading_days")
             conn.executemany(
@@ -61,17 +60,17 @@ class TradingDayRepository:
             )
         logger.info(f"全量替换交易日历，共 {len(trading_days)} 条")
 
-    def _save_incremental(self, trading_days: List[TradingDay]) -> None:
+    def _save_incremental(self, trading_days: List[date]) -> None:
         latest = self._load_latest_trade_date()
         if latest is not None:
-            trading_days = [d for d in trading_days if d.trade_date > latest]
+            trading_days = [d for d in trading_days if d > latest]
 
         if not trading_days:
             logger.info("没有新的交易日需要写入")
             return
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        rows = [(day.trade_date.isoformat(), now, now) for day in trading_days]
+        rows = [(day.isoformat(), now, now) for day in trading_days]
         with get_db() as conn:
             conn.executemany(
                 """INSERT INTO trading_days (trade_date, created_at, updated_at)
@@ -83,7 +82,7 @@ class TradingDayRepository:
             )
         logger.info(f"增量写入交易日历 {len(trading_days)} 条")
 
-    def find_trading_days(self) -> List[TradingDay]:
+    def find_trading_days(self) -> List[date]:
         """查询全部交易日，按日期升序"""
         with get_db() as conn:
             rows = conn.execute(
@@ -92,11 +91,11 @@ class TradingDayRepository:
                    WHERE is_deleted = 0
                    ORDER BY trade_date"""
             ).fetchall()
-        return [self._row_to_trading_day(row) for row in rows]
+        return [self._row_to_date(row) for row in rows]
 
     def find_trading_days_between(
         self, start_date: date, end_date: date,
-    ) -> List[TradingDay]:
+    ) -> List[date]:
         """查询闭区间 [start_date, end_date] 内的交易日"""
         with get_db() as conn:
             rows = conn.execute(
@@ -108,7 +107,7 @@ class TradingDayRepository:
                    ORDER BY trade_date""",
                 (start_date.isoformat(), end_date.isoformat()),
             ).fetchall()
-        return [self._row_to_trading_day(row) for row in rows]
+        return [self._row_to_date(row) for row in rows]
 
     def is_trading_day(self, day: date) -> bool:
         """判断指定日期是否为交易日"""
@@ -121,7 +120,6 @@ class TradingDayRepository:
             ).fetchone()
         return row is not None
 
-    def _row_to_trading_day(self, row) -> TradingDay:
-        return TradingDay(
-            trade_date=datetime.strptime(row["trade_date"], "%Y-%m-%d").date(),
-        )
+    @staticmethod
+    def _row_to_date(row) -> date:
+        return datetime.strptime(row["trade_date"], "%Y-%m-%d").date()

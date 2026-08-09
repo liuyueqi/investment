@@ -40,10 +40,7 @@ class AppContainer(containers.DeclarativeContainer):
 
     # ── 适配器（单例） ────────────────────────────────────────
     efinance_adapter = providers.Singleton(EfinanceAdapter)
-    tushare_adapter = providers.Singleton(
-        TushareAdapter,
-        default_pool=default_pool,
-    )
+    tushare_adapter = providers.Singleton(TushareAdapter)
     akshare_adapter = providers.Singleton(AkshareAdapter)
 
     # ── Repository（单例，自动注入 adapter） ─────────────────

@@ -6,7 +6,6 @@ import requests
 
 from domain.basket import Basket, BasketType
 from domain.etf import ETF
-from domain.trading_day import TradingDay
 from infra.log import logger
 
 
@@ -51,7 +50,7 @@ class AkshareAdapter:
         response.raise_for_status()
         return response.json()["data"]["rows"]
 
-    def get_all_trading_days(self) -> List[TradingDay]:
+    def get_all_trading_days(self) -> List[date]:
         """
         获取股票交易日历。
 
@@ -62,11 +61,11 @@ class AkshareAdapter:
             if df is None or df.empty:
                 return []
 
-            trading_days: List[TradingDay] = []
+            trading_days: List[date] = []
             for value in df["trade_date"]:
                 trade_date = self._parse_trade_date(value)
                 if trade_date is not None:
-                    trading_days.append(TradingDay(trade_date=trade_date))
+                    trading_days.append(trade_date)
             return trading_days
         except Exception as e:
             logger.error(f"获取交易日历失败: {e}", exc_info=True)
