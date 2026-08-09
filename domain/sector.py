@@ -29,6 +29,16 @@ class Sector:
             self.members.append(stock_code)
             self._sign = ""
 
+    def copy(self) -> "Sector":
+        """浅拷贝板块（members 列表独立）。"""
+        return Sector(
+            code=self.code,
+            name=self.name,
+            type=self.type,
+            version=self.version,
+            members=list(self.members),
+        )
+
     @property
     def sign(self) -> str:
         """

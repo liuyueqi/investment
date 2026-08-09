@@ -1,9 +1,11 @@
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from domain.sector import Sector
+from domain.sector import Sector, SectorType
 from domain.sector_change_log import SectorChangeAction, SectorChangeLog
+from infra.config import get_market_earliest_date
 
 
 @dataclass
@@ -44,8 +46,80 @@ class SectorHistory:
             entries.append((trade_date, sector))
         return cls(_entries=entries)
 
-    def __len__(self) -> int:
-        return len(self._entries)
+    @classmethod
+    def from_change_logs(
+        cls,
+        latest: Sector,
+        change_logs: List[SectorChangeLog],
+    ) -> "SectorHistory":
+        """
+            根据最新板块与变更日志回溯历史。
+            日志 version 表示变迁后的版本；逆序回放得到各版本快照。
+            各版本生效日取该 version 首条日志的 changed_at；
+            无则用 market.earliest_date。无变更日志时仅包含 latest 一条。
+        """
+        if not change_logs:
+            return cls(
+                _entries=[(get_market_earliest_date(), latest.copy())],
+            )
+
+        for log in change_logs:
+            if log.sector_code != latest.code:
+                raise ValueError(
+                    f"from_change_logs 要求同一板块 code，"
+                    f"期望 {latest.code}，实际 {log.sector_code}"
+                )
+
+        logs_by_version: Dict[int, List[SectorChangeLog]] = defaultdict(list)
+        for log in change_logs:
+            logs_by_version[log.version].append(log)
+
+        states: Dict[int, Sector] = {latest.version: latest.copy()}
+        for version in sorted(logs_by_version.keys(), reverse=True):
+            if version > latest.version:
+                raise ValueError(
+                    f"变更日志 version={version} 大于最新板块 version={latest.version}"
+                )
+            if version not in states:
+                raise ValueError(
+                    f"变更日志 version 不连续：缺少 version={version} 的板块状态"
+                )
+            prev = cls._apply_inverse(states[version], logs_by_version[version])
+            states[prev.version] = prev
+
+        entries: List[Tuple[date, Sector]] = []
+        for version in sorted(states):
+            version_logs = logs_by_version.get(version, [])
+            trade_date = (
+                version_logs[0].changed_at.date()
+                if version_logs and version_logs[0].changed_at
+                else get_market_earliest_date()
+            )
+            entries.append((trade_date, states[version]))
+
+        return cls(_entries=entries)
+
+    @staticmethod
+    def _apply_inverse(
+        sector: Sector,
+        logs: List[SectorChangeLog],
+    ) -> Sector:
+        """对 sector 逆序应用 logs，返回上一版本快照（不修改入参）。"""
+        result = sector.copy()
+        for log in logs:
+            if log.action == SectorChangeAction.ADD_MEMBER:
+                if log.new_value in result.members:
+                    result.members.remove(log.new_value)
+            elif log.action == SectorChangeAction.REMOVE_MEMBER:
+                if log.old_value not in result.members:
+                    result.members.append(log.old_value)
+            elif log.action == SectorChangeAction.MODIFY_NAME:
+                result.name = log.old_value
+            elif log.action == SectorChangeAction.MODIFY_TYPE:
+                result.type = SectorType(log.old_value)
+        result.version = sector.version - 1
+        result._sign = ""
+        return result
 
     @property
     def first(self) -> Optional[Tuple[date, Sector]]:
@@ -113,6 +187,8 @@ class SectorHistory:
             result.append(log)
         return result
 
+    def __len__(self) -> int:
+        return len(self._entries)
         
     @staticmethod
     def compute_change_logs(
