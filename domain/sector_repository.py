@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from domain.sector import Sector, SectorType
-from domain.sector_change_log import SectorChangeLog
+from domain.sector_change_log import SectorChangeAction, SectorChangeLog
 from domain.sector_history import SectorHistory
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
@@ -336,3 +336,72 @@ class SectorRepository:
                 ))
 
             return sectors
+
+    def find_sector_histories(
+        self,
+        codes: Optional[List[str]] = None,
+    ) -> Dict[str, SectorHistory]:
+        """
+            按板块代码查询最新 Sector 与 change logs，组装为 SectorHistory。
+            codes 为空时查询全部板块。
+        """
+        with get_db() as conn:
+            if codes is None:
+                rows = conn.execute(
+                    """SELECT code FROM sectors
+                       WHERE is_deleted = 0
+                       ORDER BY code"""
+                ).fetchall()
+                codes = [row["code"] for row in rows]
+            if not codes:
+                return {}
+
+            sectors = self._fetch_sectors_by_codes(conn, codes)
+            logs_by_code = self._fetch_change_logs_by_codes(conn, list(sectors.keys()))
+
+        return {
+            code: SectorHistory.from_change_logs(
+                sector, logs_by_code.get(code, []),
+            )
+            for code, sector in sectors.items()
+        }
+
+    def _fetch_change_logs_by_codes(
+        self,
+        conn,
+        codes: List[str],
+    ) -> Dict[str, List[SectorChangeLog]]:
+        if not codes:
+            return {}
+
+        placeholders = ",".join("?" * len(codes))
+        rows = conn.execute(
+            f"""SELECT sector_code, action, old_value, new_value, version,
+                       changed_at, created_at
+                FROM sector_change_logs
+                WHERE sector_code IN ({placeholders})
+                ORDER BY sector_code, version, id""",
+            codes,
+        ).fetchall()
+
+        logs_by_code: Dict[str, List[SectorChangeLog]] = defaultdict(list)
+        for row in rows:
+            changed_raw = row["changed_at"] or row["created_at"]
+            logs_by_code[row["sector_code"]].append(SectorChangeLog(
+                sector_code=row["sector_code"],
+                action=SectorChangeAction(row["action"]),
+                old_value=row["old_value"] or "",
+                new_value=row["new_value"] or "",
+                version=row["version"],
+                changed_at=(
+                    datetime.strptime(changed_raw[:19], "%Y-%m-%d %H:%M:%S")
+                    if changed_raw
+                    else None
+                ),
+                created_at=(
+                    datetime.strptime(row["created_at"][:19], "%Y-%m-%d %H:%M:%S")
+                    if row["created_at"]
+                    else None
+                ),
+            ))
+        return logs_by_code

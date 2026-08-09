@@ -50,7 +50,7 @@ class SectorHistory:
     def from_change_logs(
         cls,
         latest: Sector,
-        change_logs: List[SectorChangeLog],
+        change_logs: Optional[List[SectorChangeLog]],
     ) -> "SectorHistory":
         """
             根据最新板块与变更日志回溯历史。
