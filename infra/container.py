@@ -54,8 +54,7 @@ class AppContainer(containers.DeclarativeContainer):
 
     sector_repo = providers.Singleton(
         SectorRepository,
-        adapter=efinance_adapter,
-        build_pool=default_pool,
+        adapter=tushare_adapter,
     )
 
     money_flow_repo = providers.Singleton(

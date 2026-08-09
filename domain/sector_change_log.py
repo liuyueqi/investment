@@ -24,7 +24,8 @@ class SectorChangeLog:
     new_value: str = ""
     version: int = 0
     id: Optional[int] = None
-    created_at: Optional[datetime] = None
+    changed_at: Optional[datetime] = None  # 板块实际变更时间
+    created_at: Optional[datetime] = None  # 数据库插入时间
 
     def __str__(self) -> str:
         return (

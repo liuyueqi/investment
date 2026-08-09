@@ -149,7 +149,8 @@ def _load_sector_change_logs(conn, codes: Iterable[str]) -> Dict[str, List[Secto
 
     placeholders = ",".join("?" * len(code_list))
     rows = conn.execute(
-        f"""SELECT sector_code, action, old_value, new_value, version, created_at
+        f"""SELECT sector_code, action, old_value, new_value, version,
+                   changed_at, created_at
             FROM sector_change_logs
             WHERE sector_code IN ({placeholders})
             ORDER BY sector_code, version, id""",
@@ -158,12 +159,14 @@ def _load_sector_change_logs(conn, codes: Iterable[str]) -> Dict[str, List[Secto
 
     logs: Dict[str, List[SectorChangeLog]] = defaultdict(list)
     for row in rows:
+        changed_raw = row["changed_at"] if "changed_at" in row.keys() else None
         logs[row["sector_code"]].append(SectorChangeLog(
             sector_code=row["sector_code"],
             action=SectorChangeAction(row["action"]),
             old_value=row["old_value"],
             new_value=row["new_value"],
             version=row["version"],
+            changed_at=_parse_datetime(changed_raw or row["created_at"]),
             created_at=_parse_datetime(row["created_at"]),
         ))
     return logs
@@ -198,15 +201,15 @@ def _version_at_time(
     agg_created_at: datetime,
     change_logs: Sequence[SectorChangeLog],
 ) -> int:
-    """根据聚合记录写入时间，确定当时有效的板块 version"""
+    """根据聚合记录写入时间，对照板块变更时间确定当时有效的 version"""
     version = 0
     version_times: Dict[int, datetime] = {}
     for log in change_logs:
-        if log.created_at is None:
+        if not log.changed_at:
             continue
         prev = version_times.get(log.version)
-        if prev is None or log.created_at < prev:
-            version_times[log.version] = log.created_at
+        if not prev or log.changed_at < prev:
+            version_times[log.version] = log.changed_at
 
     for ver in sorted(version_times):
         if version_times[ver] <= agg_created_at:

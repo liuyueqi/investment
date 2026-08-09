@@ -1,14 +1,13 @@
 import time
-import threading
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from domain.sector import Sector, SectorType
 from domain.sector_change_log import SectorChangeLog
 from domain.sector_history import SectorHistory
-from infra.adapters.efinance_adapter import EfinanceAdapter
+from infra.adapters.tushare_adapter import TushareAdapter
+from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -17,24 +16,16 @@ class SectorRepository:
     """板块数据仓库，管理 sectors 表和 sector_members 表"""
 
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
-    _CHUNK_SIZE = 100   # 每个线程处理的股票数量
 
-    def __init__(self, adapter: EfinanceAdapter, build_pool: ThreadPoolExecutor):
+    def __init__(self, adapter: TushareAdapter):
         self._adapter = adapter
-        self._lock = threading.Lock()
-        self._build_pool = build_pool
 
-    def refresh(self, stock_codes: Optional[List[str]] = None, force: bool = False) -> None:
-        """同步外部数据到数据库
-        
-        Args:
-            stock_codes: 股票代码列表，为 None 则自动获取全市场
-            force: 是否强制刷新
-        """
+    def refresh(self, force: bool = False) -> None:
+        """同步外部板块快照到数据库，并写入变更日志。"""
         if not force and self._latest():
             logger.info("数据库缓存有效，跳过刷新")
             return
-        self._update_from_adapter(stock_codes)
+        self._update_from_adapter()
 
     def _latest(self) -> bool:
         """检查数据库中是否有在缓存有效期内的数据"""
@@ -52,96 +43,93 @@ class SectorRepository:
             updated_dt = datetime.strptime(max_updated, "%Y-%m-%d %H:%M:%S")
             return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
 
-    def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
-        """从适配器获取板块数据，并发处理各股票所属板块"""
-        if stock_codes is None:
-            stocks = self._adapter.get_all_stocks()
-            stock_codes = [stock.code for stock in stocks]
+    def _update_from_adapter(self) -> None:
+        start_date = self._min_sector_updated_date() or get_market_earliest_date()
+        logger.info(f"开始拉取板块快照，start_date={start_date}")
 
-        if not stock_codes:
-            logger.warning("获取股票代码列表失败，无法构建板块数据")
+        snapshots = self._adapter.get_all_sectors(start_date=start_date)
+        if not snapshots:
+            logger.warning("未获取到板块快照，跳过保存")
             return
 
-        total = len(stock_codes)
-        if total == 0:
-            logger.warning("股票代码列表为空，无法构建板块数据")
-            return
+        by_code: Dict[str, List[tuple[date, Sector]]] = defaultdict(list)
+        for trade_date, sector in snapshots:
+            by_code[sector.code].append((trade_date, sector))
 
-        # 并发加载：将股票代码分块，每个线程处理一块
-        sectors: Dict[str, Sector] = {}
-        chunks = [stock_codes[i:i + self._CHUNK_SIZE] for i in range(0, total, self._CHUNK_SIZE)]
+        histories = [
+            SectorHistory.from_snapshots(group)
+            for group in by_code.values()
+        ]
+        self._save_histories(histories)
 
-        logger.info(f"开始构建板块数据，共 {total} 只股票，分为 {len(chunks)} 个块")
-        futures = {self._build_pool.submit(self._process_chunk, chunk): chunk for chunk in chunks}
-        for fut in as_completed(futures):
-            try:
-                local_map = fut.result()
-            except Exception as e:
-                logger.error("线程处理异常", e)
-                continue
+    def _min_sector_updated_date(self) -> Optional[date]:
+        """各板块最新更新时间中的最早值；无数据返回 None。"""
+        with get_db() as conn:
+            row = conn.execute(
+                """SELECT MIN(updated_at) AS min_updated
+                   FROM sectors WHERE is_deleted = 0"""
+            ).fetchone()
+            min_updated = row["min_updated"] if row else None
+            if not min_updated:
+                return None
+            return datetime.strptime(min_updated[:19], "%Y-%m-%d %H:%M:%S").date()
 
-            with self._lock:
-                for code, sector in local_map.items():
-                    if code not in sectors:
-                        sectors[code] = sector
-                    else:
-                        for c in sector.members:
-                            sectors[code].add_member(c)
-
-        self._save_to_db(sectors)
-        logger.info(f"构建完成，共 {len(sectors)} 个板块，已保存到数据库")
-
-    def _process_chunk(self, chunk: List[str]) -> Dict[str, Sector]:
-        """处理一个股票代码块，返回该块构建的板块映射"""
-        logger.info(f"线程 {threading.current_thread().name} 开始处理 {len(chunk)} 只股票")
-        local_map: Dict[str, Sector] = {}
-        for stock_code in chunk:
-            sectors = self._adapter.get_stock_sectors(stock_code)
-            for sector in sectors:
-                code = sector['code']
-                name = sector['name']
-                if code not in local_map:
-                    local_map[code] = Sector(
-                        code=code,
-                        name=name,
-                        type=self._infer_type(name),
-                    )
-                local_map[code].add_member(stock_code)
-        return local_map
-
-    def _save_to_db(self, sectors: Dict[str, Sector]) -> None:
-        """将板块数据写入数据库（sectors 表 + sector_members 表）"""
-        if not sectors:
+    def _save_histories(self, histories: List[SectorHistory]) -> None:
+        if not histories:
             logger.warning("警告：没有板块数据可保存")
             return
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        pending = dict(sectors)
-        change_logs: List[SectorChangeLog] = []
+        codes = [h.latest[1].code for h in histories if h.latest]
+        replace_codes: List[str] = []
+        pending: List[Sector] = []
+        all_logs: List[SectorChangeLog] = []
+        skipped = 0
 
         with get_db() as conn:
-            db_sectors = self._fetch_sectors_by_codes(conn, list(pending.keys()))
+            db_sectors = self._fetch_sectors_by_codes(conn, codes)
 
-            for code, db_sector in db_sectors.items():
-                incoming = pending.get(code)
-                if incoming is None:
+            for history in histories:
+                latest_entry = history.latest
+                first_entry = history.first
+                if not latest_entry or not first_entry:
+                    skipped += 1
                     continue
-                if db_sector.sign == incoming.sign:
-                    del pending[code]
+
+                since, _ = first_entry
+                _, latest = latest_entry
+                db_sector = db_sectors.get(latest.code)
+                records = history.get_records_since(since)
+
+                # 终点 sign 相同且窗口内无中间变迁时才跳过，避免 A→B→A 被漏记
+                if db_sector and db_sector.sign == latest.sign and len(records) <= 1:
+                    skipped += 1
                     continue
 
-                incoming.version = db_sector.version + 1
-                change_logs.extend(self._compute_change_logs(db_sector, incoming))
-                self._delete_sector_and_members(conn, code)
+                base = db_sector.version if db_sector else 0
+                version_by_date = {
+                    trade_date: base + i
+                    for i, (trade_date, _) in enumerate(records)
+                }
+                latest.version = version_by_date[records[-1][0]]
 
-            for sector in pending.values():
-                self._insert_sector(conn, sector, now)
+                logs = history.get_change_logs(start_date=since)
+                for log in logs:
+                    if log.changed_at:
+                        log.version = version_by_date[log.changed_at.date()]
 
-            self._insert_change_logs(conn, change_logs, now)
+                if db_sector:
+                    replace_codes.append(latest.code)
+                pending.append(latest)
+                all_logs.extend(logs)
+
+            self._delete_sectors_and_members(conn, replace_codes)
+            self._insert_sectors(conn, pending, now)
+            self._insert_change_logs(conn, all_logs, now)
 
         logger.info(
             f"板块数据已保存到数据库，新增/更新 {len(pending)} 个，"
-            f"跳过 {len(sectors) - len(pending)} 个，变更记录 {len(change_logs)} 条"
+            f"跳过 {skipped} 个，添加变更记录 {len(all_logs)} 条"
         )
 
     def _fetch_sectors_by_codes(self, conn, codes: List[str]) -> Dict[str, Sector]:
@@ -181,51 +169,77 @@ class SectorRepository:
             sectors[row["code"]] = sector
         return sectors
 
-    def _compute_change_logs(self, old: Sector, new: Sector) -> List[SectorChangeLog]:
-        return SectorHistory.compute_change_logs(old, new, version=new.version)
-
-    def _delete_sector_and_members(self, conn, code: str) -> None:
-        conn.execute("DELETE FROM sector_members WHERE sector_code = ?", (code,))
-        conn.execute("DELETE FROM sectors WHERE code = ?", (code,))
-
-
-    def _insert_sector(self, conn, sector: Sector, now: str) -> None:
+    def _delete_sectors_and_members(self, conn, codes: List[str]) -> None:
+        if not codes:
+            return
+        placeholders = ",".join("?" * len(codes))
         conn.execute(
+            f"DELETE FROM sector_members WHERE sector_code IN ({placeholders})",
+            codes,
+        )
+        conn.execute(
+            f"DELETE FROM sectors WHERE code IN ({placeholders})",
+            codes,
+        )
+
+    def _insert_sectors(self, conn, sectors: List[Sector], now: str) -> None:
+        if not sectors:
+            return
+        conn.executemany(
             """INSERT INTO sectors
                (code, name, type, sign, version, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                sector.code,
-                sector.name,
-                sector.type.value,
-                sector.sign,
-                sector.version,
-                now,
-                now,
-            ),
+            [
+                (
+                    sector.code,
+                    sector.name,
+                    sector.type.value,
+                    sector.sign,
+                    sector.version,
+                    now,
+                    now,
+                )
+                for sector in sectors
+            ],
         )
-        for member_code in sector.members:
-            conn.execute(
-                """INSERT INTO sector_members (sector_code, stock_code, created_at, updated_at)
+        member_rows = [
+            (sector.code, member_code, now, now)
+            for sector in sectors
+            for member_code in sector.members
+        ]
+        if member_rows:
+            conn.executemany(
+                """INSERT INTO sector_members
+                   (sector_code, stock_code, created_at, updated_at)
                    VALUES (?, ?, ?, ?)""",
-                (sector.code, member_code, now, now),
+                member_rows,
             )
 
     def _insert_change_logs(self, conn, logs: List[SectorChangeLog], now: str) -> None:
-        for log in logs:
-            conn.execute(
-                """INSERT INTO sector_change_logs
-                   (sector_code, action, old_value, new_value, version, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+        if not logs:
+            return
+        conn.executemany(
+            """INSERT INTO sector_change_logs
+               (sector_code, action, old_value, new_value, version,
+                changed_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
                 (
                     log.sector_code,
                     log.action.value,
                     log.old_value,
                     log.new_value,
                     log.version,
+                    (
+                        log.changed_at.strftime("%Y-%m-%d %H:%M:%S")
+                        if log.changed_at
+                        else now
+                    ),
                     now,
-                ),
-            )
+                )
+                for log in logs
+            ],
+        )
 
     def find_by_code(self, code: str) -> Optional[Sector]:
         """根据板块代码查询板块信息及成分股"""
@@ -258,7 +272,7 @@ class SectorRepository:
 
     def find_by_codes(self, codes: Optional[List[str]]) -> List[Sector]:
         """根据一组板块代码批量查询板块信息及成分股"""
-        
+
         if not codes:
             return []
         placeholders = ",".join("?" * len(codes))
@@ -322,13 +336,3 @@ class SectorRepository:
                 ))
 
             return sectors
-
-    def _infer_type(self, name: str) -> SectorType:
-        """根据板块名称推断板块类型"""
-        if '行业' in name or '制造' in name:
-            return SectorType.INDUSTRY
-        elif '概念' in name or '主题' in name:
-            return SectorType.CONCEPT
-        elif '地区' in name:
-            return SectorType.REGION
-        return SectorType.CONCEPT

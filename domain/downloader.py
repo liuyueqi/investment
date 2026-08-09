@@ -115,7 +115,7 @@ class Downloader:
         logger.info(SEPARATOR)
 
         try:
-            self._sector_repo.refresh(stock_codes, force=True)
+            self._sector_repo.refresh(force=True)
             sectors = self._sector_repo.find_all()
             logger.info(f"共下载 {len(sectors)} 个板块")
         except ValueError as e:

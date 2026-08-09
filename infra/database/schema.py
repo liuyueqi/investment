@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS sector_change_logs (
     old_value       TEXT NOT NULL DEFAULT '',        -- 变更前值
     new_value       TEXT NOT NULL DEFAULT '',        -- 变更后值
     version         INTEGER NOT NULL DEFAULT 0,      -- 变更版本
-    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    changed_at      TEXT NOT NULL DEFAULT '',        -- 板块实际变更时间
+    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))  -- 数据库插入时间
 );
 """
 
@@ -237,8 +238,14 @@ def init_db() -> None:
             ("daily_quotes", "is_deleted INTEGER NOT NULL DEFAULT 0"),
             ("trading_days", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("trading_days", "is_deleted INTEGER NOT NULL DEFAULT 0"),
+            ("sector_change_logs", "changed_at TEXT NOT NULL DEFAULT ''"),
         ]:
             _ensure_column(conn, table, column)
+        conn.execute(
+            """UPDATE sector_change_logs
+               SET changed_at = created_at
+               WHERE changed_at IS NULL OR changed_at = ''"""
+        )
         for idx in CREATE_INDEXES:
             conn.execute(idx)
         conn.commit()
