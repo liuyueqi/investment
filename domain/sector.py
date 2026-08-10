@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
-from hashlib import sha256
-from typing import List
+from datetime import date, datetime
 from enum import Enum
+from hashlib import sha256
+from typing import List, Optional
 
 
 class SectorType(Enum):
@@ -11,6 +12,14 @@ class SectorType(Enum):
     REGION = "地区"
     STYLE = "风格"
     UNKNOWN = "UNKNOWN"
+
+
+class SectorChangeAction(Enum):
+    """板块变更类型"""
+    MODIFY_NAME = "modify_name"
+    MODIFY_TYPE = "modify_type"
+    ADD_MEMBER = "add_member"
+    REMOVE_MEMBER = "remove_member"
 
 
 @dataclass
@@ -55,3 +64,70 @@ class Sector:
 
     def __str__(self) -> str:
         return f"{self.name}（{self.code}）"
+
+
+@dataclass
+class Constituent:
+    """指数/板块在某一交易日的成分股及其权重"""
+    stock_code: str
+    weight: float
+    trade_date: date
+
+    def __str__(self) -> str:
+        return f"{self.stock_code}@{self.trade_date}({self.weight})"
+
+
+@dataclass
+class SectorChangeLog:
+    """
+        板块变更记录
+    """
+
+    sector_code: str
+    action: SectorChangeAction
+    old_value: str = ""
+    new_value: str = ""
+    version: int = 0
+    id: Optional[int] = None
+    changed_at: Optional[datetime] = None  # 板块实际变更时间
+    created_at: Optional[datetime] = None  # 数据库插入时间
+
+    def __str__(self) -> str:
+        return (
+            f"{self.sector_code} v{self.version} "
+            f"{self.action.value}: {self.old_value!r} -> {self.new_value!r}"
+        )
+
+
+@dataclass
+class DCSectorData:
+    """
+        东财概念板块行情（Tushare dc_index）
+        接口文档：https://tushare.pro/document/2?doc_id=362
+    """
+
+    ts_code: str            # 概念代码
+    trade_date: date        # 交易日期
+    name: str               # 概念名称
+    leading: str            # 领涨股票名称
+    leading_code: str       # 领涨股票代码
+    pct_change: float       # 涨跌幅
+    leading_pct: float      # 领涨股票涨跌幅
+    total_mv: float         # 总市值（万元）
+    turnover_rate: float    # 换手率
+    up_num: int             # 上涨家数
+    down_num: int           # 下降家数
+    idx_type: str           # 板块类型(行业板块、概念板块、地域板块)
+    level: str              # 行业层级
+
+
+@dataclass
+class DCSectorMemberData:
+    """
+        东财概念板块成分（Tushare dc_member）
+        接口文档：https://tushare.pro/document/2?doc_id=363
+    """
+    trade_date: date        # 交易日期
+    ts_code: str            # 概念代码
+    con_code: str           # 成分代码
+    name: str               # 成分股名称

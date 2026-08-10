@@ -3,8 +3,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from typing import Dict, List, Optional, Tuple
 
-from domain.sector import Sector, SectorType
-from domain.sector_change_log import SectorChangeAction, SectorChangeLog
+from domain.sector import Sector, SectorChangeAction, SectorChangeLog, SectorType
 from infra.config import get_market_earliest_date
 
 

@@ -32,7 +32,7 @@ from infra.container import container
 from infra.database.connection import get_db
 from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
 from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
-from domain.sector_change_log import SectorChangeAction, SectorChangeLog
+from domain.sector import SectorChangeAction, SectorChangeLog
 from domain.stock import Stock
 
 WINDOWS = (3, 5, 10, 20)

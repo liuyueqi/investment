@@ -10,15 +10,18 @@ from typing import Dict, List, Optional, Tuple
 
 from common.date_range_util import iter_day_ranges, iter_fortnight_ranges, iter_week_ranges
 from domain.basket import Basket, BasketType
-from domain.sector import Sector, SectorType
+from domain.sector import (
+    Constituent,
+    DCSectorData,
+    DCSectorMemberData,
+    Sector,
+    SectorType,
+)
 from domain.stock import Stock
 from domain.ts_code_util import infer_stock_market, normalize_code, to_stock_ts_code
-from domain.constituent import Constituent
 from domain.daily_quote import DailyQuote
 from domain.money_flow import MoneyFlow
 from infra.config import get_market_earliest_date
-from domain.dc_sector_data import DCSectorData
-from domain.dc_sector_member_data import DCSectorMemberData
 from infra.log import logger
 
 # 仅保留：① 6位数字.CSI  ⑤ 字母前缀+数字.CSI（排除币种变体）

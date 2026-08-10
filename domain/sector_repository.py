@@ -4,14 +4,18 @@ from datetime import date, datetime
 from typing import Dict, List, Optional
 
 from common.date_range_util import iter_day_ranges, iter_week_ranges
-from domain.sector import Sector, SectorType
-from domain.sector_change_log import SectorChangeAction, SectorChangeLog
+from domain.sector import (
+    DCSectorData,
+    DCSectorMemberData,
+    Sector,
+    SectorChangeAction,
+    SectorChangeLog,
+    SectorType,
+)
 from domain.sector_history import SectorHistory
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
-from domain.dc_sector_data import DCSectorData
-from domain.dc_sector_member_data import DCSectorMemberData
 from infra.log import logger
 
 
@@ -81,12 +85,13 @@ class SectorRepository:
         total = 0
         for day, _ in iter_day_ranges(start_date, end_date):
             day_rows = self._adapter.get_sector_data(day)
-            logger.info(f"dc_index 分日拉取完成: {day}, 当日 {len(day_rows)} 条")
-            if day_rows:
-                self._save_dc_sectors(day_rows)
-                total += len(day_rows)
+            inserted = self._save_dc_sectors(day_rows) if day_rows else 0
+            logger.info(
+                f"dc_index 分日拉取完成: {day}, 拉取 {len(day_rows)} 条, 写入 {inserted} 条"
+            )
+            total += inserted
             time.sleep(0.1)
-        logger.info(f"dc_sectors 增量写入完成: {start_date} ~ {end_date}, 共 {total} 条")
+        logger.info(f"dc_sectors 增量写入完成: {start_date} ~ {end_date}, 共写入 {total} 条")
 
     def _load_latest_dc_sector_date(self) -> Optional[date]:
         with get_db() as conn:
@@ -99,11 +104,12 @@ class SectorRepository:
             return None
         return datetime.strptime(row["max_date"], "%Y-%m-%d").date()
 
-    def _save_dc_sectors(self, rows: List[DCSectorData]) -> None:
+    def _save_dc_sectors(self, rows: List[DCSectorData]) -> int:
         if not rows:
-            return
+            return 0
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
+            before = conn.total_changes
             conn.executemany(
                 """INSERT INTO dc_sectors (
                        ts_code, trade_date, name, leading, leading_code,
@@ -111,20 +117,7 @@ class SectorRepository:
                        up_num, down_num, idx_type, level,
                        created_at, updated_at
                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(ts_code, trade_date) DO UPDATE SET
-                       name = excluded.name,
-                       leading = excluded.leading,
-                       leading_code = excluded.leading_code,
-                       pct_change = excluded.pct_change,
-                       leading_pct = excluded.leading_pct,
-                       total_mv = excluded.total_mv,
-                       turnover_rate = excluded.turnover_rate,
-                       up_num = excluded.up_num,
-                       down_num = excluded.down_num,
-                       idx_type = excluded.idx_type,
-                       level = excluded.level,
-                       updated_at = excluded.updated_at,
-                       is_deleted = 0""",
+                   ON CONFLICT(ts_code, trade_date) DO NOTHING""",
                 [
                     (
                         item.ts_code,
@@ -146,6 +139,7 @@ class SectorRepository:
                     for item in rows
                 ],
             )
+            return conn.total_changes - before
 
     def _update_sector_members_data(self) -> None:
         """增量同步东财板块成分到 dc_sector_members。"""
@@ -170,19 +164,24 @@ class SectorRepository:
                 week_rows = self._adapter.get_sector_members_data(ts_code, week_start, week_end)
                 if len(week_rows) >= self._DC_MEMBER_ROW_LIMIT:
                     logger.warning(f"dc_member 分周结果达到上限 {len(week_rows)} 条，改为按日重拉: {ts_code}, {week_start} ~ {week_end}")
-                    week_rows = []
                     for day_start, day_end in iter_day_ranges(week_start, week_end):
                         day_rows = self._adapter.get_sector_members_data(ts_code, day_start, day_end)
-                        if day_rows:
-                            self._save_dc_sector_members(day_rows)
-                            total += len(day_rows)
+                        inserted = self._save_dc_sector_members(day_rows) if day_rows else 0
+                        logger.info(
+                            f"dc_member 分日写入: {ts_code}, {day_start}, "
+                            f"拉取 {len(day_rows)} 条, 写入 {inserted} 条"
+                        )
+                        total += inserted
                         time.sleep(0.1)
                     continue
-                if week_rows:
-                    self._save_dc_sector_members(week_rows)
-                    total += len(week_rows)
+                inserted = self._save_dc_sector_members(week_rows) if week_rows else 0
+                logger.info(
+                    f"dc_member 分周写入: {ts_code}, {week_start} ~ {week_end}, "
+                    f"拉取 {len(week_rows)} 条, 写入 {inserted} 条"
+                )
+                total += inserted
                 time.sleep(0.1)
-        logger.info(f"dc_sector_members 增量写入完成: 共 {total} 条")
+        logger.info(f"dc_sector_members 增量写入完成: 共写入 {total} 条")
 
     def _load_dc_sector_codes(self) -> List[str]:
         """查询 dc_sectors 中去重后的 ts_code。"""
@@ -211,20 +210,18 @@ class SectorRepository:
             result[row["ts_code"]] = datetime.strptime(row["max_date"], "%Y-%m-%d").date()
         return result
 
-    def _save_dc_sector_members(self, rows: List[DCSectorMemberData]) -> None:
+    def _save_dc_sector_members(self, rows: List[DCSectorMemberData]) -> int:
         if not rows:
-            return
+            return 0
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
+            before = conn.total_changes
             conn.executemany(
                 """INSERT INTO dc_sector_members (
                        trade_date, ts_code, con_code, name,
                        created_at, updated_at
                    ) VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(trade_date, ts_code, con_code) DO UPDATE SET
-                       name = excluded.name,
-                       updated_at = excluded.updated_at,
-                       is_deleted = 0""",
+                   ON CONFLICT(trade_date, ts_code, con_code) DO NOTHING""",
                 [
                     (
                         item.trade_date.isoformat(),
@@ -237,6 +234,7 @@ class SectorRepository:
                     for item in rows
                 ],
             )
+            return conn.total_changes - before
 
     def _min_sector_updated_date(self) -> Optional[date]:
         """各板块最新更新时间中的最早值；无数据返回 None。"""
