@@ -1,19 +1,21 @@
-"""验证 money_flow_aggregation 数据的完整性与正确性
+"""验证基础数据与 money_flow_aggregation 的完整性与正确性
 
 检查项：
-  1. 自 config.toml market.earliest_date 起每个交易日，个股 money_flows 有数据率 >= 95%
-  2. 个股 accumulation / sliding：与 money_flows 直接计算结果比对
-  3. 板块 accumulation：按 sector_change_logs 重建的版本快照验证
-  4. 板块 sliding：按聚合记录写入时点对应的板块版本验证
-
-板块成分股历史通过 sector_change_logs 回放得到；无变更记录时以当前成分股（version 0）验证。
+  1. trading_days：与 TushareAdapter.get_all_trading_days 比对是否一致
+  2. stocks：与 TushareAdapter.get_all_stocks 比对是否一致
+  3. 自 config.toml market.earliest_date 起按库内 trading_days，每个交易日有 money_flows 的个股占比 >= 95%（排除北交所）
+  4. 自 config.toml market.earliest_date 起，按个股 money_flows 交易日校验 accumulation / sliding(3/5/10/20) 齐全且连续（兼容停牌）
+  5. （可选）个股/板块聚合数值与 money_flows 重算结果比对
 
 用法：
-  python validate_aggregation.py                  # 检查全部
-  python validate_aggregation.py --scope stock    # 仅检查个股（含 flow 覆盖率）
-  python validate_aggregation.py --scope coverage # 仅检查 flow 覆盖率
-  python validate_aggregation.py --code 000001    # 检查指定代码
-  python validate_aggregation.py --limit 50       # 抽样检查（各类各取前 N 个）
+  python validate_aggregation.py                     # 检查全部（含 1~4）
+  python validate_aggregation.py --scope calendar    # 仅交易日历
+  python validate_aggregation.py --scope stocks      # 仅股票列表
+  python validate_aggregation.py --scope coverage    # 仅 flow 覆盖率
+  python validate_aggregation.py --scope completeness # 仅聚合齐全/连续
+  python validate_aggregation.py --scope stock       # 个股数值比对
+  python validate_aggregation.py --code 000001
+  python validate_aggregation.py --limit 50
 """
 
 from __future__ import annotations
@@ -22,18 +24,25 @@ import argparse
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from datetime import date, datetime, timedelta
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from infra.config import get_market_earliest_date
+from infra.container import container
 from infra.database.connection import get_db
 from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
 from domain.money_flow_aggregation import MoneyFlowAggregation, AggregationType
 from domain.sector_change_log import SectorChangeAction, SectorChangeLog
+from domain.stock import Stock
 
 WINDOWS = (3, 5, 10, 20)
 TOLERANCE = 0.01  # 万元，允许浮点误差
 FLOW_COVERAGE_MIN_RATE = 0.95
+
+
+def _validation_end_date() -> date:
+    """校验截止日：不含今天（当日可能尚未开盘/收盘，不参与验证）。"""
+    return date.today() - timedelta(days=1)
 
 _agg_repo = MoneyFlowAggregationRepository()
 
@@ -565,19 +574,6 @@ def _compare_agg_series(
             ))
 
 
-def _load_trading_days_between(conn, start_date: date, end_date: date) -> List[date]:
-    rows = conn.execute(
-        """SELECT trade_date
-           FROM trading_days
-           WHERE is_deleted = 0
-             AND trade_date >= ?
-             AND trade_date <= ?
-           ORDER BY trade_date""",
-        (start_date.isoformat(), end_date.isoformat()),
-    ).fetchall()
-    return [datetime.strptime(row["trade_date"], "%Y-%m-%d").date() for row in rows]
-
-
 def _load_flow_counts_by_date(
     conn, start_date: date, end_date: date,
 ) -> Dict[date, int]:
@@ -600,10 +596,123 @@ def _load_flow_counts_by_date(
     }
 
 
+def _load_all_trading_days(
+    conn,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+) -> List[date]:
+    """加载库内交易日；可按 start_date / end_date 截取闭区间。"""
+    sql = """SELECT trade_date FROM trading_days
+             WHERE is_deleted = 0"""
+    params: List = []
+    if start_date is not None:
+        sql += " AND trade_date >= ?"
+        params.append(start_date.isoformat())
+    if end_date is not None:
+        sql += " AND trade_date <= ?"
+        params.append(end_date.isoformat())
+    sql += " ORDER BY trade_date"
+    rows = conn.execute(sql, params).fetchall()
+    return [datetime.strptime(row["trade_date"], "%Y-%m-%d").date() for row in rows]
+
+
+def _load_db_stocks(conn) -> Dict[str, Stock]:
+    rows = conn.execute(
+        """SELECT code, name, market FROM stocks
+           WHERE is_deleted = 0 ORDER BY code"""
+    ).fetchall()
+    return {
+        row["code"]: Stock(code=row["code"], name=row["name"], market=row["market"])
+        for row in rows
+    }
+
+
+def validate_trading_days(conn, report: ValidationReport) -> None:
+    """用 Tushare get_all_trading_days 校验库内 trading_days 是否一致。"""
+    print("拉取 Tushare 交易日历...")
+    adapter = container.tushare_adapter()
+    try:
+        remote_days = set(adapter.get_all_trading_days())
+    except Exception as exc:
+        report.add(Issue("market", "*", "trading_days", f"Tushare 拉取交易日历失败: {exc}"))
+        return
+
+    db_days = set(_load_all_trading_days(conn))
+    only_remote = sorted(remote_days - db_days)
+    only_db = sorted(db_days - remote_days)
+
+    print(
+        f"trading_days 一致性：Tushare {len(remote_days)} 天，DB {len(db_days)} 天，"
+        f"仅远端 {len(only_remote)}，仅 DB {len(only_db)}"
+    )
+    if only_remote:
+        sample = only_remote[:10]
+        report.add(Issue(
+            "market", "*", "trading_days",
+            f"DB 缺失 {len(only_remote)} 个交易日，示例: {sample}",
+        ))
+    if only_db:
+        sample = only_db[:10]
+        report.add(Issue(
+            "market", "*", "trading_days",
+            f"DB 多余 {len(only_db)} 个交易日，示例: {sample}",
+        ))
+
+
+def validate_stocks(conn, report: ValidationReport) -> None:
+    """用 Tushare get_all_stocks 校验库内 stocks 是否一致。"""
+    print("拉取 Tushare 股票列表...")
+    adapter = container.tushare_adapter()
+    try:
+        remote_stocks = {s.code: s for s in adapter.get_all_stocks()}
+    except Exception as exc:
+        report.add(Issue("market", "*", "stocks", f"Tushare 拉取股票列表失败: {exc}"))
+        return
+
+    db_stocks = _load_db_stocks(conn)
+    only_remote = sorted(set(remote_stocks) - set(db_stocks))
+    only_db = sorted(set(db_stocks) - set(remote_stocks))
+    both = set(remote_stocks) & set(db_stocks)
+
+    mismatch = 0
+    for code in sorted(both):
+        r, d = remote_stocks[code], db_stocks[code]
+        diffs = []
+        if (r.name or "") != (d.name or ""):
+            diffs.append(f"name {d.name!r}->{r.name!r}")
+        if (r.market or "") != (d.market or ""):
+            diffs.append(f"market {d.market!r}->{r.market!r}")
+        if diffs:
+            mismatch += 1
+            if mismatch <= 20:
+                report.add(Issue(
+                    "stock", code, "stocks",
+                    "字段不一致: " + ", ".join(diffs),
+                ))
+
+    print(
+        f"stocks 一致性：Tushare {len(remote_stocks)} 只，DB {len(db_stocks)} 只，"
+        f"仅远端 {len(only_remote)}，仅 DB {len(only_db)}，字段不一致 {mismatch}"
+    )
+    if only_remote:
+        report.add(Issue(
+            "market", "*", "stocks",
+            f"DB 缺失 {len(only_remote)} 只股票，示例: {only_remote[:10]}",
+        ))
+    if only_db:
+        report.add(Issue(
+            "market", "*", "stocks",
+            f"DB 多余 {len(only_db)} 只股票，示例: {only_db[:10]}",
+        ))
+    if mismatch > 20:
+        report.add(Issue(
+            "market", "*", "stocks",
+            f"另有 {mismatch - 20} 只股票字段不一致未逐条列出",
+        ))
+
+
 def validate_flow_coverage(conn, report: ValidationReport) -> None:
-    """校验自 market.earliest_date 起每个交易日的个股 money_flows 有数据率（排除北交所）"""
-    start_date = get_market_earliest_date()
-    end_date = date.today()
+    """按库内 trading_days，校验每个交易日个股 money_flows 有数据率（排除北交所）。"""
     stock_count = conn.execute(
         """SELECT COUNT(*) AS cnt FROM stocks
            WHERE is_deleted = 0 AND market != 'BJ'"""
@@ -615,15 +724,20 @@ def validate_flow_coverage(conn, report: ValidationReport) -> None:
         ))
         return
 
-    trading_days = _load_trading_days_between(conn, start_date, end_date)
+    validation_start = get_market_earliest_date()
+    validation_end = _validation_end_date()
+    trading_days = _load_all_trading_days(
+        conn, start_date=validation_start, end_date=validation_end,
+    )
     if not trading_days:
         report.add(Issue(
             "market", "*", "flow_coverage",
-            f"trading_days 在 {start_date} ~ {end_date} 无数据，"
+            f"trading_days 在 {validation_start} ~ {validation_end} 无数据，"
             "请先 download 交易日历",
         ))
         return
 
+    start_date, end_date = trading_days[0], trading_days[-1]
     flow_counts = _load_flow_counts_by_date(conn, start_date, end_date)
     failed = 0
     min_rate = 1.0
@@ -644,12 +758,171 @@ def validate_flow_coverage(conn, report: ValidationReport) -> None:
             ))
 
     print(
-        f"flow 覆盖率检查（排除北交所）：交易日 {len(trading_days)} 天，"
+        f"flow 覆盖率检查（排除北交所，自 {validation_start}）："
+        f"交易日 {len(trading_days)} 天（{start_date} ~ {end_date}），"
         f"股票池 {stock_count} 只，低于 {FLOW_COVERAGE_MIN_RATE:.0%} 的交易日 {failed} 天"
         + (
             f"；最低 {min_rate:.2%} @ {min_rate_date}"
             if min_rate_date is not None else ""
         )
+    )
+
+
+def _load_stock_agg_end_dates(
+    conn, codes: Sequence[str],
+) -> Dict[str, Dict]:
+    """加载个股聚合 end_date：{code: {accumulation: set[date], sliding: {w: set[date]}}}"""
+    result: Dict[str, Dict] = {
+        code: {"accumulation": set(), "sliding": {w: set() for w in WINDOWS}}
+        for code in codes
+    }
+    if not codes:
+        return result
+
+    placeholders = ",".join("?" * len(codes))
+    rows = conn.execute(
+        f"""SELECT code, end_date, trading_days, is_accumulative
+            FROM money_flow_aggregation
+            WHERE type = ?
+              AND code IN ({placeholders})""",
+        [AggregationType.STOCK.value, *codes],
+    ).fetchall()
+    for row in rows:
+        code = row["code"]
+        if code not in result:
+            continue
+        end = datetime.strptime(row["end_date"][:10], "%Y-%m-%d").date()
+        if row["is_accumulative"]:
+            result[code]["accumulation"].add(end)
+        else:
+            window = int(row["trading_days"])
+            if window in result[code]["sliding"]:
+                result[code]["sliding"][window].add(end)
+    return result
+
+
+def _report_date_gaps(
+    report: ValidationReport,
+    code: str,
+    category: str,
+    expected: Sequence[date],
+    actual: Set[date],
+    sample_limit: int = 5,
+) -> int:
+    """校验 actual 相对 expected 是否齐全；返回缺失天数。"""
+    expected_set = set(expected)
+    missing = sorted(expected_set - actual)
+    extra = sorted(actual - expected_set)
+    if missing:
+        report.add(Issue(
+            "stock", code, category,
+            f"缺失 {len(missing)} 天，示例: {missing[:sample_limit]}",
+        ))
+    if extra:
+        report.add(Issue(
+            "stock", code, category,
+            f"多余 {len(extra)} 天（无对应 money_flows），示例: {extra[:sample_limit]}",
+        ))
+    return len(missing)
+
+
+def validate_stock_agg_completeness(
+    conn,
+    report: ValidationReport,
+    codes: Optional[List[str]] = None,
+    limit: Optional[int] = None,
+) -> None:
+    """
+        按个股 money_flows 交易日校验 accumulation / sliding(3/5/10/20) 齐全且连续。
+        以 flow 日期为基准，天然兼容停牌日（无 flow 的日期不要求有聚合）。
+    """
+    validation_start = get_market_earliest_date()
+    validation_end = _validation_end_date()
+
+    stock_codes = _load_stocks(conn)
+    bj_codes = {
+        row["code"]
+        for row in conn.execute(
+            "SELECT code FROM stocks WHERE is_deleted = 0 AND market = 'BJ'"
+        ).fetchall()
+    }
+    stock_codes = [c for c in stock_codes if c not in bj_codes]
+
+    if codes:
+        stock_codes = [c for c in stock_codes if c in set(codes)]
+    if limit is not None:
+        stock_codes = stock_codes[:limit]
+
+    flows_by_code = _load_flows(conn, stock_codes)
+    aggs = _load_stock_agg_end_dates(conn, stock_codes)
+    no_flow = 0
+    missing_acc = 0
+    incomplete_acc = 0
+    incomplete_slide = 0
+
+    for code in stock_codes:
+        flow_dates = sorted(
+            d for d, _, _ in flows_by_code.get(code, [])
+            if validation_start <= d <= validation_end
+        )
+        data = aggs.get(code) or {"accumulation": set(), "sliding": {w: set() for w in WINDOWS}}
+        acc_dates: Set[date] = {
+            d for d in data["accumulation"]
+            if validation_start <= d <= validation_end
+        }
+
+        if not flow_dates:
+            no_flow += 1
+            if acc_dates or any(data["sliding"][w] for w in WINDOWS):
+                report.add(Issue(
+                    "stock", code, "accumulation",
+                    f"{validation_start} ~ {validation_end} 无 money_flows 但存在聚合数据",
+                ))
+            continue
+
+        if not acc_dates:
+            missing_acc += 1
+            report.add(Issue(
+                "stock", code, "accumulation",
+                f"有 {len(flow_dates)} 天 money_flows，但无 accumulation 数据",
+            ))
+            continue
+
+        if _report_date_gaps(report, code, "accumulation", flow_dates, acc_dates):
+            incomplete_acc += 1
+
+        for window in WINDOWS:
+            slide_dates: Set[date] = {
+                d for d in data["sliding"][window]
+                if validation_start <= d <= validation_end
+            }
+            if len(flow_dates) < window:
+                if slide_dates:
+                    incomplete_slide += 1
+                    report.add(Issue(
+                        "stock", code, f"sliding({window}日)",
+                        f"money_flows 仅 {len(flow_dates)} 天，不应存在 sliding 数据",
+                    ))
+                continue
+            if not slide_dates:
+                incomplete_slide += 1
+                report.add(Issue(
+                    "stock", code, f"sliding({window}日)",
+                    "有足够 money_flows 但无 sliding 数据",
+                ))
+                continue
+
+            # 以 flow 序列滑动：从第 window 个有 flow 的交易日起，每日都应有 end=该日的 sliding
+            expected_slide = flow_dates[window - 1 :]
+            if _report_date_gaps(
+                report, code, f"sliding({window}日)", expected_slide, slide_dates,
+            ):
+                incomplete_slide += 1
+
+    print(
+        f"聚合齐全/连续检查（排除北交所，自 {validation_start}，按 money_flows）："
+        f"股票 {len(stock_codes)} 只，无 flow {no_flow}，无 accumulation {missing_acc}，"
+        f"accumulation 不齐 {incomplete_acc}，sliding 不齐 {incomplete_slide}"
     )
 
 
@@ -720,10 +993,19 @@ def run_validation(
     report = ValidationReport()
 
     with get_db() as conn:
-        if scope in ("all", "stock", "coverage"):
+        if scope in ("all", "calendar"):
+            validate_trading_days(conn, report)
+
+        if scope in ("all", "stocks"):
+            validate_stocks(conn, report)
+
+        if scope in ("all", "coverage", "stock"):
             validate_flow_coverage(conn, report)
 
-        if scope == "coverage":
+        if scope in ("all", "completeness"):
+            validate_stock_agg_completeness(conn, report, codes=codes, limit=limit)
+
+        if scope in ("calendar", "stocks", "coverage", "completeness"):
             return report
 
         all_stocks = _load_stocks(conn)
@@ -816,10 +1098,16 @@ def _print_report(report: ValidationReport, verbose: bool) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="验证 aggregation 数据完整性与正确性")
+    parser = argparse.ArgumentParser(description="验证基础数据与 aggregation 完整性/正确性")
     parser.add_argument(
-        "--scope", choices=["all", "stock", "sector", "coverage"], default="all",
-        help="检查范围（默认 all；coverage 仅检查 money_flows 交易日有数据率）",
+        "--scope",
+        choices=["all", "calendar", "stocks", "coverage", "completeness", "stock", "sector"],
+        default="all",
+        help=(
+            "检查范围：all=1~4+数值比对；calendar=交易日；stocks=股票列表；"
+            "coverage=flow 覆盖率；completeness=聚合齐全连续；"
+            "stock/sector=数值比对"
+        ),
     )
     parser.add_argument(
         "--code", nargs="+", metavar="CODE",
@@ -835,7 +1123,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    print("开始验证 aggregation 数据...")
+    print("开始验证...")
     report = run_validation(scope=args.scope, codes=args.code, limit=args.limit)
     _print_report(report, verbose=args.verbose)
     return 0 if report.ok else 1

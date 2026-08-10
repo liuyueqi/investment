@@ -3,14 +3,15 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import Dict, List, Optional
 
-from common.date_util import iter_day_ranges, iter_week_ranges
+from common.date_range_util import iter_day_ranges, iter_week_ranges
 from domain.sector import Sector, SectorType
 from domain.sector_change_log import SectorChangeAction, SectorChangeLog
 from domain.sector_history import SectorHistory
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
-from infra.database.tushare_data import DCSectorData, DCSectorMemberData
+from domain.dc_sector_data import DCSectorData
+from domain.dc_sector_member_data import DCSectorMemberData
 from infra.log import logger
 
 
@@ -18,6 +19,7 @@ class SectorRepository:
     """板块数据仓库，管理 sectors 表和 sector_members 表"""
 
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
+    _DC_MEMBER_ROW_LIMIT = 8000
 
     def __init__(self, adapter: TushareAdapter):
         self._adapter = adapter
@@ -147,17 +149,18 @@ class SectorRepository:
 
     def _update_sector_members_data(self) -> None:
         """增量同步东财板块成分到 dc_sector_members。"""
-        latest_date_by_code = self._load_latest_dc_sector_dates_by_code()
-        if not latest_date_by_code:
+        sector_codes = self._load_dc_sector_codes()
+        if not sector_codes:
             logger.warning("dc_sectors 无数据，跳过成分拉取")
             return
 
+        latest_date_by_code = self._load_latest_dc_member_dates()
         end_date = date.today()
-        logger.info(f"按周拉取 dc_member: 共 {len(latest_date_by_code)} 个板块, 截止 {end_date}")
+        logger.info(f"按周拉取 dc_member: 共 {len(sector_codes)} 个板块, 截止 {end_date}")
 
         total = 0
-        for seq, (ts_code, latest_date) in enumerate(sorted(latest_date_by_code.items())):
-            start_date = latest_date if latest_date else get_market_earliest_date()
+        for seq, ts_code in enumerate(sector_codes):
+            start_date = latest_date_by_code.get(ts_code) or get_market_earliest_date()
             if start_date >= end_date:
                 logger.info(f"{seq}: {ts_code} 成分已覆盖至 {start_date}，跳过")
                 continue
@@ -165,18 +168,39 @@ class SectorRepository:
             logger.info(f"{seq}: 按周拉取板块成分: {ts_code}, {start_date} ~ {end_date}")
             for week_start, week_end in iter_week_ranges(start_date, end_date):
                 week_rows = self._adapter.get_sector_members_data(ts_code, week_start, week_end)
+                if len(week_rows) >= self._DC_MEMBER_ROW_LIMIT:
+                    logger.warning(f"dc_member 分周结果达到上限 {len(week_rows)} 条，改为按日重拉: {ts_code}, {week_start} ~ {week_end}")
+                    week_rows = []
+                    for day_start, day_end in iter_day_ranges(week_start, week_end):
+                        day_rows = self._adapter.get_sector_members_data(ts_code, day_start, day_end)
+                        if day_rows:
+                            self._save_dc_sector_members(day_rows)
+                            total += len(day_rows)
+                        time.sleep(0.1)
+                    continue
                 if week_rows:
                     self._save_dc_sector_members(week_rows)
                     total += len(week_rows)
                 time.sleep(0.1)
         logger.info(f"dc_sector_members 增量写入完成: 共 {total} 条")
 
-    def _load_latest_dc_sector_dates_by_code(self) -> Dict[str, date]:
-        """查询 dc_sectors，按 ts_code 分组取各板块最新 trade_date。"""
+    def _load_dc_sector_codes(self) -> List[str]:
+        """查询 dc_sectors 中去重后的 ts_code。"""
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT ts_code
+                   FROM dc_sectors
+                   WHERE is_deleted = 0
+                   ORDER BY ts_code"""
+            ).fetchall()
+        return [row["ts_code"] for row in rows]
+
+    def _load_latest_dc_member_dates(self) -> Dict[str, date]:
+        """查询 dc_sector_members，按 ts_code 分组取各板块最新 trade_date。"""
         with get_db() as conn:
             rows = conn.execute(
                 """SELECT ts_code, MAX(trade_date) AS max_date
-                   FROM dc_sectors
+                   FROM dc_sector_members
                    WHERE is_deleted = 0
                    GROUP BY ts_code"""
             ).fetchall()
