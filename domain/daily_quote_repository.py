@@ -3,7 +3,6 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
 from domain.daily_quote import DailyQuote
-from infra.adapters.efinance_adapter import EfinanceAdapter
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
@@ -18,7 +17,7 @@ class DailyQuoteRepository:
 
     def __init__(
         self,
-        stock_adapter: EfinanceAdapter,
+        stock_adapter: TushareAdapter,
         quote_adapter: TushareAdapter,
     ):
         """

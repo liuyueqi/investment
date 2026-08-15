@@ -3,7 +3,6 @@ from typing import Dict, List, Optional
 from datetime import date, datetime, timedelta
 
 from domain.money_flow import MoneyFlow
-from infra.adapters.efinance_adapter import EfinanceAdapter
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
@@ -18,7 +17,7 @@ class MoneyFlowRepository:
 
     def __init__(
         self,
-        stock_adapter: EfinanceAdapter,
+        stock_adapter: TushareAdapter,
         flow_adapter: TushareAdapter,
     ):
         """

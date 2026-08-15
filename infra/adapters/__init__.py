@@ -1,5 +1,5 @@
-from .akshare_adapter import AkshareAdapter
-from .efinance_adapter import EfinanceAdapter
+# from .akshare_adapter import AkshareAdapter  # UNUSED
+# from .efinance_adapter import EfinanceAdapter  # UNUSED
 from .tushare_adapter import TushareAdapter
 
-__all__ = ['AkshareAdapter', 'EfinanceAdapter', 'TushareAdapter']
+__all__ = ['TushareAdapter']

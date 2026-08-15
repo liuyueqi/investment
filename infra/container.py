@@ -3,8 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from dependency_injector import containers, providers
 
-from infra.adapters.akshare_adapter import AkshareAdapter
-from infra.adapters.efinance_adapter import EfinanceAdapter
+# from infra.adapters.akshare_adapter import AkshareAdapter  # UNUSED
 from infra.adapters.tushare_adapter import TushareAdapter
 from domain.stock_repository import StockRepository
 from domain.sector_repository import SectorRepository
@@ -39,9 +38,8 @@ class AppContainer(containers.DeclarativeContainer):
     )
 
     # ── 适配器（单例） ────────────────────────────────────────
-    efinance_adapter = providers.Singleton(EfinanceAdapter)
     tushare_adapter = providers.Singleton(TushareAdapter)
-    akshare_adapter = providers.Singleton(AkshareAdapter)
+    # akshare_adapter = providers.Singleton(AkshareAdapter)  # UNUSED
 
     # ── Repository（单例，自动注入 adapter） ─────────────────
     stock_repo = providers.Singleton(
@@ -56,13 +54,13 @@ class AppContainer(containers.DeclarativeContainer):
 
     money_flow_repo = providers.Singleton(
         MoneyFlowRepository,
-        stock_adapter=efinance_adapter,
+        stock_adapter=tushare_adapter,
         flow_adapter=tushare_adapter,
     )
 
     daily_quote_repo = providers.Singleton(
         DailyQuoteRepository,
-        stock_adapter=efinance_adapter,
+        stock_adapter=tushare_adapter,
         quote_adapter=tushare_adapter,
     )
 
