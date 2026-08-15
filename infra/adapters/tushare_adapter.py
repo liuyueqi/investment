@@ -493,11 +493,11 @@ class TushareAdapter:
         """
         try:
             params = {}
-            if code is not None:
+            if code:
                 params['ts_code'] = to_stock_ts_code(code)
-            if start_date is not None:
+            if start_date:
                 params['start_date'] = start_date.strftime('%Y%m%d')
-            if end_date is not None:
+            if end_date:
                 params['end_date'] = end_date.strftime('%Y%m%d')
             
             results = self._pro.moneyflow(**params)

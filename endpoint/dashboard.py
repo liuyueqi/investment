@@ -81,7 +81,7 @@ class Dashboard:
     @staticmethod
     def launch() -> None:
         """启动 Streamlit 看板子进程"""
-        if Dashboard._process is not None and Dashboard._process.poll() is None:
+        if Dashboard._process and Dashboard._process.poll() is None:
             print("\n数据看板已在运行中")
             print("请在浏览器中访问: http://localhost:8501")
             return
@@ -136,7 +136,7 @@ class Dashboard:
     @staticmethod
     def stop() -> None:
         """停止 Streamlit 看板子进程"""
-        if Dashboard._process is not None:
+        if Dashboard._process:
             Dashboard._process.terminate()
             try:
                 Dashboard._process.wait(timeout=5)
@@ -153,7 +153,7 @@ class Dashboard:
     ) -> Tuple[List[date], List[float]]:
         filtered = [
             q for q in quotes
-            if (start is None or q.date >= start) and (end is None or q.date <= end)
+            if (not start or q.date >= start) and (not end or q.date <= end)
         ]
         return [q.date for q in filtered], [q.close for q in filtered]
 

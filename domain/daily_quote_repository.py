@@ -53,7 +53,7 @@ class DailyQuoteRepository:
             if count == 0:
                 return False
             max_updated = row["max_updated"]
-            if max_updated is None:
+            if not max_updated:
                 return False
             updated_dt = datetime.strptime(max_updated, "%Y-%m-%d %H:%M:%S")
             return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
@@ -124,7 +124,7 @@ class DailyQuoteRepository:
         return result
 
     def _is_up_to_date(self, last_date: Optional[date]) -> bool:
-        if last_date is None:
+        if not last_date:
             return False
         return last_date >= self._get_last_trading_day()
 

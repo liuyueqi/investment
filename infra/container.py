@@ -80,6 +80,7 @@ class AppContainer(containers.DeclarativeContainer):
         sector_repo=sector_repo,
         money_flow_repo=money_flow_repo,
         agg_repo=money_flow_aggregation_repo,
+        trading_day_repo=trading_day_repo,
         default_pool=default_pool,
         sector_aggr_pool=sector_aggr_pool,
         sector_calc_pool=sector_calc_pool,

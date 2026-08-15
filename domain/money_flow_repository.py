@@ -28,6 +28,7 @@ class MoneyFlowRepository:
         self._stock_adapter = stock_adapter
         self._flow_adapter = flow_adapter
         self._find_by_code_cache: Dict[str, List[MoneyFlow]] = {}
+        self._find_by_code_and_date_cache: Dict[tuple[str, date], Optional[MoneyFlow]] = {}
 
     def refresh(self, stock_codes: Optional[List[str]] = None,
                 force: bool = True) -> None:
@@ -53,7 +54,7 @@ class MoneyFlowRepository:
             if count == 0:
                 return False
             max_updated = row["max_updated"]
-            if max_updated is None:
+            if not max_updated:
                 return False
             updated_dt = datetime.strptime(max_updated, "%Y-%m-%d %H:%M:%S")
             return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
@@ -123,7 +124,7 @@ class MoneyFlowRepository:
 
     def _is_up_to_date(self, last_date: Optional[date]) -> bool:
         """判断股票数据是否需要更新"""
-        if last_date is None:
+        if not last_date:
             return False
         last_trading_day = self._get_last_trading_day()
         return last_date >= last_trading_day
@@ -217,6 +218,23 @@ class MoneyFlowRepository:
             self._find_by_code_cache[code] = result
             return result
 
+    def find_by_code_and_date(
+        self,
+        code: str,
+        trade_date: date,
+        force: bool = False,
+    ) -> Optional[MoneyFlow]:
+        """按股票代码和交易日查询单条资金流向记录。"""
+        cache_key = (code, trade_date)
+        if not force and cache_key in self._find_by_code_and_date_cache:
+            return self._find_by_code_and_date_cache[cache_key]
+
+        for flow in self.find_by_code(code, force):
+            flow_date = flow.time.date()
+            self._find_by_code_and_date_cache[(code, flow_date)] = flow
+            
+        return self._find_by_code_and_date_cache.get(cache_key, None)
+
     def find_by_code_and_date_range(
         self, 
         code: str, 
@@ -271,9 +289,9 @@ class MoneyFlowRepository:
                 if row and row['start_date']:
                     start_date = datetime.strptime(row['start_date'], '%Y-%m-%d').date()
                     end_date = datetime.strptime(row['end_date'], '%Y-%m-%d').date()
-                    if earliest_date is None or start_date < earliest_date:
+                    if not earliest_date or start_date < earliest_date:
                         earliest_date = start_date
-                    if latest_date is None or end_date > latest_date:
+                    if not latest_date or end_date > latest_date:
                         latest_date = end_date
                         
         return (earliest_date, latest_date)
@@ -306,3 +324,4 @@ class MoneyFlowRepository:
 
     def clear_cache(self):
         self._find_by_code_cache.clear()
+        self._find_by_code_and_date_cache.clear()

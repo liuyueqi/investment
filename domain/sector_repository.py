@@ -48,7 +48,7 @@ class SectorRepository:
             if count == 0:
                 return False
             max_updated = row["max_updated"]
-            if max_updated is None:
+            if not max_updated:
                 return False
             updated_dt = datetime.strptime(max_updated, "%Y-%m-%d %H:%M:%S")
             return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
@@ -101,7 +101,7 @@ class SectorRepository:
                    FROM dc_sectors
                    WHERE is_deleted = 0"""
             ).fetchone()
-        if row is None or row["max_date"] is None:
+        if not row or not row["max_date"]:
             return None
         return datetime.strptime(row["max_date"], "%Y-%m-%d").date()
 
@@ -144,16 +144,16 @@ class SectorRepository:
 
     def _update_sector_members_data(self) -> None:
         """增量同步东财板块成分到 dc_sector_members。"""
-        sector_dates = self._load_dc_sector_dates()
-        if not sector_dates:
+        sectors_date_range = self.find_dc_sectors_date_range()
+        if not sectors_date_range:
             logger.warning("dc_sectors 无数据，跳过成分拉取")
             return
 
         member_dates = self._load_latest_dc_member_dates()
-        logger.info(f"按周拉取 dc_member: 共 {len(sector_dates)} 个板块")
+        logger.info(f"按周拉取 dc_member: 共 {len(sectors_date_range)} 个板块")
 
         total = 0
-        for seq, (ts_code, sector_max_date) in enumerate(sector_dates.items()):
+        for seq, (ts_code, (_, sector_max_date)) in enumerate(sectors_date_range.items()):
             member_max_date = member_dates.get(ts_code)
             if member_max_date and member_max_date >= sector_max_date:
                 logger.info(
@@ -191,22 +191,68 @@ class SectorRepository:
                 time.sleep(0.1)
         logger.info(f"dc_sector_members 增量写入完成: 共写入 {total} 条")
 
-    def _load_dc_sector_dates(self) -> Dict[str, date]:
-        """查询 dc_sectors，按 ts_code 分组返回各板块最新 trade_date。"""
+    def find_dc_sectors_date_range(
+        self,
+        codes: Optional[List[str]] = None,
+    ) -> Dict[str, tuple[date, date]]:
+        """查询 dc_sectors，按 ts_code 分组返回各板块 (最早, 最晚) trade_date。
+
+        Args:
+            codes: 可选板块代码列表；为空则查询全部。
+        """
+        with get_db() as conn:
+            if codes is not None:
+                if not codes:
+                    return {}
+                placeholders = ",".join("?" * len(codes))
+                rows = conn.execute(
+                    f"""SELECT ts_code,
+                               MIN(trade_date) AS min_date,
+                               MAX(trade_date) AS max_date
+                        FROM dc_sectors
+                        WHERE is_deleted = 0
+                          AND ts_code IN ({placeholders})
+                        GROUP BY ts_code
+                        ORDER BY ts_code""",
+                    codes,
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT ts_code,
+                              MIN(trade_date) AS min_date,
+                              MAX(trade_date) AS max_date
+                       FROM dc_sectors
+                       WHERE is_deleted = 0
+                       GROUP BY ts_code
+                       ORDER BY ts_code"""
+                ).fetchall()
+        result: Dict[str, tuple[date, date]] = {}
+        for row in rows:
+            if not row["min_date"] or not row["max_date"]:
+                continue
+            result[row["ts_code"]] = (
+                datetime.strptime(row["min_date"], "%Y-%m-%d").date(),
+                datetime.strptime(row["max_date"], "%Y-%m-%d").date(),
+            )
+        return result
+
+    def find_dc_members_by_date(
+        self,
+        sector_code: str,
+        trade_date: date,
+    ) -> List[str]:
+        """查询指定板块在某交易日的成分股代码列表。"""
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT ts_code, MAX(trade_date) AS max_date
-                   FROM dc_sectors
+                """SELECT con_code
+                   FROM dc_sector_members
                    WHERE is_deleted = 0
-                   GROUP BY ts_code
-                   ORDER BY ts_code"""
+                     AND ts_code = ?
+                     AND trade_date = ?
+                   ORDER BY con_code""",
+                (sector_code, trade_date.isoformat()),
             ).fetchall()
-        result: Dict[str, date] = {}
-        for row in rows:
-            if row["max_date"] is None:
-                continue
-            result[row["ts_code"]] = datetime.strptime(row["max_date"], "%Y-%m-%d").date()
-        return result
+        return [row["con_code"] for row in rows]
 
     def _load_latest_dc_member_dates(self) -> Dict[str, date]:
         """查询 dc_sector_members，按 ts_code 分组取各板块最新 trade_date。"""
@@ -219,7 +265,7 @@ class SectorRepository:
             ).fetchall()
         result: Dict[str, date] = {}
         for row in rows:
-            if row["max_date"] is None:
+            if not row["max_date"]:
                 continue
             result[row["ts_code"]] = datetime.strptime(row["max_date"], "%Y-%m-%d").date()
         return result
@@ -450,7 +496,7 @@ class SectorRepository:
                    WHERE code = ? AND is_deleted = 0""",
                 (code,),
             ).fetchone()
-            if row is None:
+            if not row:
                 return None
 
             member_rows = conn.execute(

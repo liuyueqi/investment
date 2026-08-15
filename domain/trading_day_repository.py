@@ -35,7 +35,7 @@ class TradingDayRepository:
 
     def _latest_is_today(self) -> bool:
         latest = self._load_latest_trade_date()
-        return latest is not None and latest == date.today()
+        return bool(latest) and latest == date.today()
 
     def _load_latest_trade_date(self) -> Optional[date]:
         with get_db() as conn:
@@ -44,7 +44,7 @@ class TradingDayRepository:
                    FROM trading_days
                    WHERE is_deleted = 0"""
             ).fetchone()
-        if row is None or row["max_date"] is None:
+        if not row or not row["max_date"]:
             return None
         return datetime.strptime(row["max_date"], "%Y-%m-%d").date()
 
@@ -62,7 +62,7 @@ class TradingDayRepository:
 
     def _save_incremental(self, trading_days: List[date]) -> None:
         latest = self._load_latest_trade_date()
-        if latest is not None:
+        if latest:
             trading_days = [d for d in trading_days if d > latest]
 
         if not trading_days:
@@ -118,7 +118,7 @@ class TradingDayRepository:
                    WHERE trade_date = ? AND is_deleted = 0""",
                 (day.isoformat(),),
             ).fetchone()
-        return row is not None
+        return bool(row)
 
     @staticmethod
     def _row_to_date(row) -> date:

@@ -302,7 +302,7 @@ def _load_aggregations(
             ))
             continue
 
-        if agg_obj is None:
+        if not agg_obj:
             continue
 
         if row["is_accumulative"]:
@@ -394,7 +394,7 @@ def _validate_sector_accumulation(
         expected = _expected_sector_accumulation_row(
             member_history, change_logs, stock_accumulations, end_date, agg_created_at,
         )
-        if expected is None:
+        if not expected:
             report.add(Issue(
                 "sector", code, "accumulation",
                 f"version {version} 无有效成分股数据 (end={end_date})",
@@ -488,7 +488,7 @@ def _validate_sector_sliding(
         for row in rows:
             start_date, end_date, trading_days, main_net, main_cnt, _ = row
             expected = expected_map.get((start_date, end_date))
-            if expected is None:
+            if not expected:
                 report.add(Issue(
                     "sector", code, label,
                     f"version {version} 无法复现窗口 "
@@ -605,10 +605,10 @@ def _load_all_trading_days(
     sql = """SELECT trade_date FROM trading_days
              WHERE is_deleted = 0"""
     params: List = []
-    if start_date is not None:
+    if start_date:
         sql += " AND trade_date >= ?"
         params.append(start_date.isoformat())
-    if end_date is not None:
+    if end_date:
         sql += " AND trade_date <= ?"
         params.append(end_date.isoformat())
     sql += " ORDER BY trade_date"
@@ -763,7 +763,7 @@ def validate_flow_coverage(conn, report: ValidationReport) -> None:
         f"股票池 {stock_count} 只，低于 {FLOW_COVERAGE_MIN_RATE:.0%} 的交易日 {failed} 天"
         + (
             f"；最低 {min_rate:.2%} @ {min_rate_date}"
-            if min_rate_date is not None else ""
+            if min_rate_date else ""
         )
     )
 

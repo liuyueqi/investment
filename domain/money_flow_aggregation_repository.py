@@ -120,7 +120,7 @@ class MoneyFlowAggregationRepository:
         with self._accumulation_lock:
             if not force and cache_key in self._accumulation_cache:
                 cached = self._accumulation_cache[cache_key]
-                if since is None:
+                if not since:
                     return cached
                 return [c for c in cached if c.end_date >= since]
 
@@ -204,12 +204,12 @@ class MoneyFlowAggregationRepository:
         result: List[MoneyFlowAggregation] = []
         for row in rows:
             agg = self._row_to_agg(row)
-            if agg is not None:
+            if agg:
                 result.append(agg)
         return result
 
     def _row_to_agg(self, row: Optional[dict]) -> Optional[MoneyFlowAggregation]:
-        if row is None:
+        if not row:
             return None
 
         def _opt_date(val) -> date:

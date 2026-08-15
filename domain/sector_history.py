@@ -30,7 +30,7 @@ class SectorHistory:
 
         sorted_snapshots = sorted(snapshots, key=lambda item: item[0])
         for trade_date, sector in sorted_snapshots:
-            if expected_code is None:
+            if not expected_code:
                 expected_code = sector.code
             elif sector.code != expected_code:
                 raise ValueError(
