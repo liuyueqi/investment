@@ -80,23 +80,24 @@ class MoneyFlowAggregationRepository:
             now, now,
         )
 
-    def find_by_date_range(
-            self, 
-            code: str, 
-            start_date: date, 
-            end_date: date, 
-            accumulative: bool
-    ) -> Optional[MoneyFlowAggregation]:
-        with get_db() as conn:
-            row = conn.execute(
-                """SELECT * FROM money_flow_aggregation
-                   WHERE code = ?
-                     AND start_date = ?
-                     AND end_date = ?
-                     AND is_accumulative = ?""",
-                (code, start_date.isoformat(), end_date.isoformat(), int(accumulative)),
-            ).fetchone()
-            return self._row_to_agg(row) if row else None
+# UNUSED: MoneyFlowAggregationRepository.find_by_date_range 不可达
+#     def find_by_date_range(
+#             self,
+#             code: str,
+#             start_date: date,
+#             end_date: date,
+#             accumulative: bool
+#     ) -> Optional[MoneyFlowAggregation]:
+#         with get_db() as conn:
+#             row = conn.execute(
+#                 """SELECT * FROM money_flow_aggregation
+#                    WHERE code = ?
+#                      AND start_date = ?
+#                      AND end_date = ?
+#                      AND is_accumulative = ?""",
+#                 (code, start_date.isoformat(), end_date.isoformat(), int(accumulative)),
+#             ).fetchone()
+#             return self._row_to_agg(row) if row else None
 
     def find_longest_accumulation(self, code: str) -> Optional[MoneyFlowAggregation]:
         with get_db() as conn:
