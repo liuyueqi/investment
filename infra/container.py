@@ -50,21 +50,22 @@ class AppContainer(containers.DeclarativeContainer):
         adapter=tushare_adapter,
     )
 
+    trading_day_repo = providers.Singleton(
+        TradingDayRepository,
+        adapter=tushare_adapter,
+    )
+
     money_flow_repo = providers.Singleton(
         MoneyFlowRepository,
         stock_adapter=tushare_adapter,
         flow_adapter=tushare_adapter,
+        trading_day_repo=trading_day_repo,
     )
 
     daily_quote_repo = providers.Singleton(
         DailyQuoteRepository,
         stock_adapter=tushare_adapter,
         quote_adapter=tushare_adapter,
-    )
-
-    trading_day_repo = providers.Singleton(
-        TradingDayRepository,
-        adapter=tushare_adapter,
     )
 
     money_flow_aggregation_repo = providers.Singleton(

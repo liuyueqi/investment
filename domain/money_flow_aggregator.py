@@ -304,12 +304,12 @@ class MoneyFlowAggregator:
         }
         total = len(futures)
         for i, future in enumerate(as_completed(futures), 1):
-            sector = futures[future]
+            sector_code = futures[future]
             try:
                 future.result()
-                logger.info(f"{i}: 板块 {sector} 聚合完成")
+                logger.info(f"{i}: 板块 {sector_code} 聚合完成")
             except Exception as e:
-                logger.error(f"{i}: 板块 {sector} 聚合失败: {e}")
+                logger.error(f"{i}: 板块 {sector_code} 聚合失败: {e}")
             if i % 20 == 0 or i == total:
                 logger.info(f"板块聚合进度: {i}/{total}")
 
@@ -407,46 +407,6 @@ class MoneyFlowAggregator:
         self._money_flow_agg_repo.save(*new_aggs)
         logger.info(f"保存了 {len(new_aggs)} 条板块 {sector_code} 的资金总量数据")
 
-    def _sector_member_daily_flows(
-        self,
-        sector_code: str,
-        start_date: date,
-        end_date: date,
-    ) -> List[tuple[date, List[MoneyFlow]]]:
-        """
-            按交易日构建板块当日成员 flow 序列（跳过无成员资金流的日期）。
-        """
-
-        trading_days = self._trading_day_repo.find_trading_days_between(
-            start_date, end_date,
-        )
-        daily_flows: List[tuple[date, List[MoneyFlow]]] = []
-        for trading_day in trading_days:
-            member_flows = self._sector_member_flows(sector_code, trading_day)
-            if member_flows:
-                daily_flows.append((trading_day, member_flows))
-        return daily_flows
-
-    def _sector_member_flows(
-        self,
-        sector_code: str,
-        trading_day: date,
-    ) -> List[MoneyFlow]:
-        """
-            取指定交易日板块成分股的 MoneyFlow 列表。
-        """
-        
-        members = self._sector_repo.find_dc_members_by_date(sector_code, trading_day)
-        member_flows: List[MoneyFlow] = []
-        for member in members:
-            member_code = normalize_code(str(member).split(".", 1)[0])
-            member_flow = self._money_flow_repo.find_by_code_and_date(
-                member_code, trading_day,
-            )
-            if member_flow:
-                member_flows.append(member_flow)
-        return member_flows
-
     def _aggregate_sector_sliding(
         self,
         sector_code: str,
@@ -540,3 +500,43 @@ class MoneyFlowAggregator:
 
         self._money_flow_agg_repo.save(*new_aggs)
         logger.info(f"保存了 {len(new_aggs)} 条板块 {sector_code} 的 {window}日 净流入数据")
+
+    def _sector_member_daily_flows(
+        self,
+        sector_code: str,
+        start_date: date,
+        end_date: date,
+    ) -> List[tuple[date, List[MoneyFlow]]]:
+        """
+            按交易日构建板块当日成员 flow 序列（跳过无成员资金流的日期）。
+        """
+
+        trading_days = self._trading_day_repo.find_trading_days_between(
+            start_date, end_date,
+        )
+        daily_flows: List[tuple[date, List[MoneyFlow]]] = []
+        for trading_day in trading_days:
+            member_flows = self._sector_member_flows(sector_code, trading_day)
+            if member_flows:
+                daily_flows.append((trading_day, member_flows))
+        return daily_flows
+
+    def _sector_member_flows(
+        self,
+        sector_code: str,
+        trading_day: date,
+    ) -> List[MoneyFlow]:
+        """
+            取指定交易日板块成分股的 MoneyFlow 列表。
+        """
+        
+        members = self._sector_repo.find_dc_members_by_date(sector_code, trading_day)
+        member_flows: List[MoneyFlow] = []
+        for member in members:
+            member_code = normalize_code(str(member).split(".", 1)[0])
+            member_flow = self._money_flow_repo.find_by_code_and_date(
+                member_code, trading_day,
+            )
+            if member_flow:
+                member_flows.append(member_flow)
+        return member_flows

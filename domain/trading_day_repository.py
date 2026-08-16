@@ -38,6 +38,7 @@ class TradingDayRepository:
             self._insert_new(trading_days)
         else:
             self._replace_all(trading_days)
+        self.clear_cache()
 
     def _latest_is_today(self) -> bool:
         latest = self._load_latest_trade_date()
@@ -72,7 +73,6 @@ class TradingDayRepository:
                    ON CONFLICT(trade_date) DO NOTHING""",
                 rows,
             )
-        self.clear_cache()
         logger.info(f"增量写入交易日历 {len(trading_days)} 条")
 
     def _replace_all(self, trading_days: List[date]) -> None:
@@ -85,7 +85,6 @@ class TradingDayRepository:
                    VALUES (?, ?, ?)""",
                 rows,
             )
-        self.clear_cache()
         logger.info(f"全量替换交易日历，共 {len(trading_days)} 条")
 
     def find_trading_days(self) -> List[date]:
@@ -106,6 +105,25 @@ class TradingDayRepository:
         """判断指定日期是否为交易日"""
         _, day_set = self._get_cache()
         return day in day_set
+
+    def find_latest_trading_day(self, before: Optional[date] = None) -> Optional[date]:
+        """
+            最近一个交易日；默认不晚于今天。
+
+            Args:
+                before: 可选的截止日期，默认为今天。
+
+            Returns:
+                Optional[date]: 最近一个交易日，或 None 如果找不到。
+        """
+        days, _ = self._get_cache()
+        if not days:
+            return None
+        cutoff = before if before is not None else date.today()
+        hi = bisect.bisect_right(days, cutoff)
+        if hi == 0:
+            return None
+        return days[hi - 1]
 
     def _get_cache(self) -> Tuple[Tuple[date, ...], frozenset[date]]:
         cache = self._cache

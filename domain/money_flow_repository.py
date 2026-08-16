@@ -1,8 +1,11 @@
+import bisect
+import threading
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from datetime import date, datetime, timedelta
 
 from domain.money_flow import MoneyFlow
+from domain.trading_day_repository import TradingDayRepository
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
@@ -19,16 +22,20 @@ class MoneyFlowRepository:
         self,
         stock_adapter: TushareAdapter,
         flow_adapter: TushareAdapter,
+        trading_day_repo: TradingDayRepository,
     ):
         """
         Args:
             stock_adapter: 用于获取股票列表的适配器
             flow_adapter: 用于获取资金流向数据的适配器
+            trading_day_repo: 交易日历仓库
         """
         self._stock_adapter = stock_adapter
         self._flow_adapter = flow_adapter
-        self._find_by_code_cache: Dict[str, List[MoneyFlow]] = {}
-        self._find_by_code_and_date_cache: Dict[tuple[str, date], Optional[MoneyFlow]] = {}
+        self._trading_day_repo = trading_day_repo
+        # 按 code 的不可变快照：(升序 flows, date -> flow)；一写多读
+        self._cache: Dict[str, Tuple[Tuple[MoneyFlow, ...], Dict[date, MoneyFlow]]] = {}
+        self._cache_lock = threading.RLock()
 
     def refresh(self, stock_codes: Optional[List[str]] = None,
                 force: bool = True) -> None:
@@ -42,6 +49,7 @@ class MoneyFlowRepository:
             logger.info("数据库缓存有效，跳过刷新")
             return
         self._update_from_adapter(stock_codes)
+        self.clear_cache()
 
     def _latest(self) -> bool:
         """检查数据库中是否有在缓存有效期内的数据"""
@@ -131,13 +139,10 @@ class MoneyFlowRepository:
 
     def _get_last_trading_day(self) -> date:
         """获取最近一个交易日"""
-        today = date.today()
-        weekday = today.weekday()
-        if weekday == 5:
-            return today - timedelta(days=1)
-        elif weekday == 6:
-            return today - timedelta(days=2)
-        return today
+        last = self._trading_day_repo.find_latest_trading_day()
+        if not last:
+            raise ValueError("交易日历为空，无法获取最近交易日")
+        return last
 
     def _save_flows_to_db(self, money_flows: List[MoneyFlow]) -> None:
         """将资金流向数据写入数据库（UPSERT，幂等安全）"""
@@ -194,29 +199,8 @@ class MoneyFlowRepository:
             Returns:
                 资金流向记录列表
         """
-        if not force and code in self._find_by_code_cache:
-            return self._find_by_code_cache[code]
-
-        with get_db() as conn:
-            rows = conn.execute(
-                """SELECT code, trade_date, period,
-                          main_cnt, main_net,
-                          huge_buy_cnt, huge_buy_net,
-                          huge_sell_cnt, huge_sell_net,
-                          large_buy_cnt, large_buy_net,
-                          large_sell_cnt, large_sell_net,
-                          medium_buy_cnt, medium_buy_net,
-                          medium_sell_cnt, medium_sell_net,
-                          small_buy_cnt, small_buy_net,
-                          small_sell_cnt, small_sell_net
-                   FROM money_flows
-                   WHERE code = ? AND period = 'day' AND is_deleted = 0
-                   ORDER BY trade_date""",
-                (code,),
-            ).fetchall()
-            result = [self._row_to_money_flow(row) for row in rows]
-            self._find_by_code_cache[code] = result
-            return result
+        flows, _ = self._get_cache(code, force)
+        return list(flows)
 
     def find_by_code_and_date(
         self,
@@ -225,26 +209,19 @@ class MoneyFlowRepository:
         force: bool = False,
     ) -> Optional[MoneyFlow]:
         """按股票代码和交易日查询单条资金流向记录。"""
-        cache_key = (code, trade_date)
-        if not force and cache_key in self._find_by_code_and_date_cache:
-            return self._find_by_code_and_date_cache[cache_key]
-
-        for flow in self.find_by_code(code, force):
-            flow_date = flow.time.date()
-            self._find_by_code_and_date_cache[(code, flow_date)] = flow
-            
-        return self._find_by_code_and_date_cache.get(cache_key, None)
+        _, by_date = self._get_cache(code, force)
+        return by_date.get(trade_date)
 
     def find_by_code_and_date_range(
-        self, 
-        code: str, 
-        start_date: date, 
-        end_date: date, 
-        force: bool = False
+        self,
+        code: str,
+        start_date: date,
+        end_date: date,
+        force: bool = False,
     ) -> List[MoneyFlow]:
         """
             按股票代码和日期范围查询资金流向记录。
-            优先走 find_by_code 的缓存，在内存中过滤日期范围。
+            与 find_by_code / find_by_code_and_date 共用同一缓存。
 
             Args:
                 code (str):       股票代码
@@ -255,11 +232,10 @@ class MoneyFlowRepository:
             Returns:
                 符合条件的资金流向记录列表
         """
-        all_flows = self.find_by_code(code, force)
-        return [
-            f for f in all_flows
-            if f.time.date() >= start_date and f.time.date() <= end_date
-        ]
+        flows, _ = self._get_cache(code, force)
+        lo = bisect.bisect_left(flows, start_date, key=lambda f: f.time.date())
+        hi = bisect.bisect_right(flows, end_date, key=lambda f: f.time.date())
+        return list(flows[lo:hi])
 
 # UNUSED: MoneyFlowRepository.get_date_range 不可达
 #     _BATCH_SIZE = 500
@@ -297,6 +273,44 @@ class MoneyFlowRepository:
 #
 #         return (earliest_date, latest_date)
 
+    def _get_cache(
+        self, code: str, force: bool = False,
+    ) -> Tuple[Tuple[MoneyFlow, ...], Dict[date, MoneyFlow]]:
+        if not force:
+            cached = self._cache.get(code)
+            if cached is not None:
+                return cached
+        with self._cache_lock:
+            if not force:
+                cached = self._cache.get(code)
+                if cached is not None:
+                    return cached
+            flows = tuple(self._load_flows_from_db(code))
+            by_date = {flow.time.date(): flow for flow in flows}
+            snapshot = (flows, by_date)
+            self._cache[code] = snapshot
+            return snapshot
+
+    def _load_flows_from_db(self, code: str) -> List[MoneyFlow]:
+        with get_db() as conn:
+            rows = conn.execute(
+                """SELECT code, trade_date, period,
+                          main_cnt, main_net,
+                          huge_buy_cnt, huge_buy_net,
+                          huge_sell_cnt, huge_sell_net,
+                          large_buy_cnt, large_buy_net,
+                          large_sell_cnt, large_sell_net,
+                          medium_buy_cnt, medium_buy_net,
+                          medium_sell_cnt, medium_sell_net,
+                          small_buy_cnt, small_buy_net,
+                          small_sell_cnt, small_sell_net
+                   FROM money_flows
+                   WHERE code = ? AND period = 'day' AND is_deleted = 0
+                   ORDER BY trade_date""",
+                (code,),
+            ).fetchall()
+        return [self._row_to_money_flow(row) for row in rows]
+
     def _row_to_money_flow(self, row) -> MoneyFlow:
         """将数据库行记录转换为 MoneyFlow 实体"""
         trade_date = datetime.strptime(row["trade_date"], "%Y-%m-%d")
@@ -323,6 +337,6 @@ class MoneyFlowRepository:
             small_sell_net=row["small_sell_net"],
         )
 
-    def clear_cache(self):
-        self._find_by_code_cache.clear()
-        self._find_by_code_and_date_cache.clear()
+    def clear_cache(self) -> None:
+        with self._cache_lock:
+            self._cache.clear()
