@@ -45,11 +45,6 @@ class MoneyFlow:
     small_sell_cnt: Optional[int] = None
     small_sell_net: Optional[float] = None
 
-    # (以下为已废弃的派生计算字段，保留注释)
-    # huge_cnt / huge_net / large_cnt / large_net /
-    # medium_cnt / medium_net / small_cnt / small_net
-    # 可通过 buy_* - sell_* 计算得到
-
     # ========== 核心工厂方法 ==========
 
     @classmethod

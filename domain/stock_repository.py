@@ -83,20 +83,6 @@ class StockRepository:
             ).fetchall()
             return [Stock(code=row["code"], name=row["name"], market=row["market"]) for row in rows]
 
-# UNUSED: StockRepository.find_by_code 不可达
-#     def find_by_code(self, code: str) -> Optional[Stock]:
-#         """根据股票代码查询"""
-#         with get_db() as conn:
-#             row = conn.execute(
-#                 """SELECT code, name, market
-#                    FROM stocks
-#                    WHERE code = ? AND is_deleted = 0""",
-#                 (code,),
-#             ).fetchone()
-#             if row is None:
-#                 return None
-#             return Stock(code=row["code"], name=row["name"], market=row["market"])
-
     def find_by_codes(self, codes: Optional[List[str]]) -> List[Stock]:
         """根据一组股票代码批量查询"""
         
@@ -112,15 +98,4 @@ class StockRepository:
                 codes,
             ).fetchall()
             return [Stock(code=row["code"], name=row["name"], market=row["market"]) for row in rows]
-
-# UNUSED: StockRepository.get_all_codes 不可达
-#     def get_all_codes(self) -> List[str]:
-#         """获取所有股票代码列表"""
-#         with get_db() as conn:
-#             rows = conn.execute(
-#                 """SELECT code FROM stocks
-#                    WHERE is_deleted = 0
-#                    ORDER BY code"""
-#             ).fetchall()
-#             return [row["code"] for row in rows]
 

@@ -49,3 +49,4 @@ dist/
 *.db-wal
 data/
 logs/investment.log*
+test.py
