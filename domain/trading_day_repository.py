@@ -1,5 +1,7 @@
+import bisect
+import threading
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.database.connection import get_db
@@ -11,13 +13,17 @@ class TradingDayRepository:
 
     def __init__(self, adapter: TushareAdapter):
         self._adapter = adapter
+        # 不可变快照：(升序交易日, 集合)；一写多读，读者持引用无需加锁
+        self._cache: Optional[Tuple[Tuple[date, ...], frozenset[date]]] = None
+        self._cache_lock = threading.RLock()
 
     def refresh(self, incr: bool = True, force: bool = False) -> None:
-        """同步交易日历到数据库。
+        """
+            同步交易日历到数据库。
 
-        Args:
-            incr: 是否增量更新。False 时清空表后全量写入。
-            force: 是否强制更新。False 且表中最新交易日已是今天时跳过拉取。
+            Args:
+                incr: 是否增量更新。False 时清空表后全量写入。
+                force: 是否强制更新。False 且表中最新交易日已是今天时跳过拉取。
         """
         if not force and self._latest_is_today():
             logger.info("trading_days 最新日期已是今天，跳过刷新")
@@ -29,7 +35,7 @@ class TradingDayRepository:
             return
 
         if incr:
-            self._save_incremental(trading_days)
+            self._insert_new(trading_days)
         else:
             self._replace_all(trading_days)
 
@@ -48,19 +54,7 @@ class TradingDayRepository:
             return None
         return datetime.strptime(row["max_date"], "%Y-%m-%d").date()
 
-    def _replace_all(self, trading_days: List[date]) -> None:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        rows = [(day.isoformat(), now, now) for day in trading_days]
-        with get_db() as conn:
-            conn.execute("DELETE FROM trading_days")
-            conn.executemany(
-                """INSERT INTO trading_days (trade_date, created_at, updated_at)
-                   VALUES (?, ?, ?)""",
-                rows,
-            )
-        logger.info(f"全量替换交易日历，共 {len(trading_days)} 条")
-
-    def _save_incremental(self, trading_days: List[date]) -> None:
+    def _insert_new(self, trading_days: List[date]) -> None:
         latest = self._load_latest_trade_date()
         if latest:
             trading_days = [d for d in trading_days if d > latest]
@@ -75,15 +69,56 @@ class TradingDayRepository:
             conn.executemany(
                 """INSERT INTO trading_days (trade_date, created_at, updated_at)
                    VALUES (?, ?, ?)
-                   ON CONFLICT(trade_date) DO UPDATE SET
-                       updated_at = excluded.updated_at,
-                       is_deleted = 0""",
+                   ON CONFLICT(trade_date) DO NOTHING""",
                 rows,
             )
+        self.clear_cache()
         logger.info(f"增量写入交易日历 {len(trading_days)} 条")
+
+    def _replace_all(self, trading_days: List[date]) -> None:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = [(day.isoformat(), now, now) for day in trading_days]
+        with get_db() as conn:
+            conn.execute("DELETE FROM trading_days")
+            conn.executemany(
+                """INSERT INTO trading_days (trade_date, created_at, updated_at)
+                   VALUES (?, ?, ?)""",
+                rows,
+            )
+        self.clear_cache()
+        logger.info(f"全量替换交易日历，共 {len(trading_days)} 条")
 
     def find_trading_days(self) -> List[date]:
         """查询全部交易日，按日期升序"""
+        days, _ = self._get_cache()
+        return list(days)
+
+    def find_trading_days_between(
+        self, start_date: date, end_date: date,
+    ) -> List[date]:
+        """查询闭区间 [start_date, end_date] 内的交易日"""
+        days, _ = self._get_cache()
+        lo = bisect.bisect_left(days, start_date)
+        hi = bisect.bisect_right(days, end_date)
+        return list(days[lo:hi])
+
+    def is_trading_day(self, day: date) -> bool:
+        """判断指定日期是否为交易日"""
+        _, day_set = self._get_cache()
+        return day in day_set
+
+    def _get_cache(self) -> Tuple[Tuple[date, ...], frozenset[date]]:
+        cache = self._cache
+        if cache is not None:
+            return cache
+        with self._cache_lock:
+            if self._cache is not None:
+                return self._cache
+            days = tuple(self._load_all_from_db())
+            self._cache = (days, frozenset(days))
+            return self._cache
+
+    def _load_all_from_db(self) -> List[date]:
         with get_db() as conn:
             rows = conn.execute(
                 """SELECT trade_date
@@ -93,33 +128,9 @@ class TradingDayRepository:
             ).fetchall()
         return [self._row_to_date(row) for row in rows]
 
-    def find_trading_days_between(
-        self, start_date: date, end_date: date,
-    ) -> List[date]:
-        """查询闭区间 [start_date, end_date] 内的交易日"""
-        with get_db() as conn:
-            rows = conn.execute(
-                """SELECT trade_date
-                   FROM trading_days
-                   WHERE is_deleted = 0
-                     AND trade_date >= ?
-                     AND trade_date <= ?
-                   ORDER BY trade_date""",
-                (start_date.isoformat(), end_date.isoformat()),
-            ).fetchall()
-        return [self._row_to_date(row) for row in rows]
-
-    def is_trading_day(self, day: date) -> bool:
-        """判断指定日期是否为交易日"""
-        with get_db() as conn:
-            row = conn.execute(
-                """SELECT 1
-                   FROM trading_days
-                   WHERE trade_date = ? AND is_deleted = 0""",
-                (day.isoformat(),),
-            ).fetchone()
-        return bool(row)
-
-    @staticmethod
-    def _row_to_date(row) -> date:
+    def _row_to_date(self, row) -> date:
         return datetime.strptime(row["trade_date"], "%Y-%m-%d").date()
+
+    def clear_cache(self) -> None:
+        with self._cache_lock:
+            self._cache = None

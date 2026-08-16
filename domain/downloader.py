@@ -92,7 +92,7 @@ class Downloader:
         logger.info("下载交易日历")
         logger.info(SEPARATOR)
 
-        self._trading_day_repo.refresh(incr=True, force=False)
+        self._trading_day_repo.refresh()
 
     def _download_stocks(self) -> None:
         """下载股票数据到数据库"""

@@ -13,6 +13,7 @@ from domain.stock import Stock
 from domain.ts_code_util import infer_stock_market, normalize_code, to_stock_ts_code
 from domain.daily_quote import DailyQuote
 from domain.money_flow import MoneyFlow
+from infra.config import get_market_earliest_date
 from infra.log import logger
 
 _EXCHANGE_TO_MARKET = {
@@ -85,10 +86,11 @@ class TushareAdapter:
             接口: trade_cal(is_open='1')
         """
         try:
-            end_date = date(date.today().year + 1, 12, 31)
+            start_date = get_market_earliest_date()
+            end_date = date.today()
             df = self._pro.trade_cal(
                 exchange="SSE",
-                start_date="19900101",
+                start_date=start_date.strftime("%Y%m%d"),
                 end_date=end_date.strftime("%Y%m%d"),
                 is_open="1",
             )
