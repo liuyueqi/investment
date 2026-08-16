@@ -24,17 +24,11 @@ class AppContainer(containers.DeclarativeContainer):
         thread_name_prefix="DefaultPool",
     )
 
-    sector_aggr_pool = providers.Singleton(
-        ThreadPoolExecutor,
-        max_workers=4,
-        thread_name_prefix="SectorAggrPool",
-    )
-
-    sector_calc_pool = providers.Singleton(
-        ThreadPoolExecutor,
-        max_workers=8,
-        thread_name_prefix="SectorCalcPool",
-    )
+    # sector_calc_pool = providers.Singleton(
+    #     ThreadPoolExecutor,
+    #     max_workers=8,
+    #     thread_name_prefix="SectorCalcPool",
+    # )
 
     # ── 适配器（单例） ────────────────────────────────────────
     tushare_adapter = providers.Singleton(TushareAdapter)
@@ -81,8 +75,6 @@ class AppContainer(containers.DeclarativeContainer):
         agg_repo=money_flow_aggregation_repo,
         trading_day_repo=trading_day_repo,
         default_pool=default_pool,
-        sector_aggr_pool=sector_aggr_pool,
-        sector_calc_pool=sector_calc_pool,
     )
 
     # ── 下载器（单例，注入依赖） ─────────────────────────────

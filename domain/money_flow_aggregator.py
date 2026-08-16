@@ -1,6 +1,6 @@
 """资金流聚合器：从 money_flows 原始数据计算生成 money_flow_aggregation"""
 
-from concurrent.futures import ThreadPoolExecutor, Future, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from typing import List, Dict, Optional
@@ -41,8 +41,6 @@ class MoneyFlowAggregator:
         agg_repo: MoneyFlowAggregationRepository,
         trading_day_repo: TradingDayRepository,
         default_pool: ThreadPoolExecutor,
-        sector_aggr_pool: ThreadPoolExecutor,
-        sector_calc_pool: ThreadPoolExecutor,
     ):
         self._stock_repo = stock_repo
         self._sector_repo = sector_repo
@@ -50,8 +48,6 @@ class MoneyFlowAggregator:
         self._money_flow_agg_repo = agg_repo
         self._trading_day_repo = trading_day_repo
         self._default_pool = default_pool
-        self._sector_aggr_pool = sector_aggr_pool
-        self._sector_calc_pool = sector_calc_pool
 
     # ════════════════════════════════════════════════════════════
     #  公开接口
@@ -292,55 +288,43 @@ class MoneyFlowAggregator:
             并发处理多个板块的聚合计算。
             依赖已计算好的个股聚合数据。
 
-            Args:
-                sectors (List[Sector]): 待聚合的板块列表
-                sector_dates (Dict[str, tuple[date, date]]): 板块的 (最早, 最晚) 日期
-            使用 ThreadPoolExecutor 并发执行，每完成 20 个记录一次进度日志。
+            对每个板块异步提交：
+              1. 资金总量（_aggregate_sector_accumulation）
+              2. 3/5/10/20 日滑动窗口（_aggregate_sector_sliding_by_window）
         """
-    
-        futures = {
-            self._sector_aggr_pool.submit(self._aggregate_sector, sector_code, min_date, max_date): (sector_code, min_date, max_date)
-            for sector_code, (min_date, max_date) in sectors_date_range.items()
-        }
+
+        futures: Dict = {}
+        for sector_code, (min_date, max_date) in sectors_date_range.items():
+            
+            # 资金总量
+            future = self._default_pool.submit(
+                self._aggregate_sector_accumulation, 
+                sector_code, 
+                min_date, 
+                max_date,
+            )
+            futures[future] = sector_code
+
+            # 滑动窗口
+            for window in self._TRADING_DAYS:
+                future = self._default_pool.submit(
+                    self._aggregate_sector_sliding_by_window,
+                    sector_code,
+                    window,
+                    min_date,
+                    max_date,
+                )
+                futures[future] = sector_code
+
         total = len(futures)
         for i, future in enumerate(as_completed(futures), 1):
             sector_code = futures[future]
             try:
                 future.result()
-                logger.info(f"{i}: 板块 {sector_code} 聚合完成")
-            except Exception as e:
-                logger.error(f"{i}: 板块 {sector_code} 聚合失败: {e}")
-            if i % 20 == 0 or i == total:
-                logger.info(f"板块聚合进度: {i}/{total}")
-
-    def _aggregate_sector(self, sector_code: str, min_date: date, max_date: date) -> None:
-        """
-            聚合单个板块的资金总量和滑动窗口净流入。
-            按顺序执行：
-              1. 计算板块的资金总量
-              2. 计算板块 3/5/10/20 天的滑动窗口
-
-            Args:
-                sector_code (str): 板块代码
-                min_date (date): 板块行情最早日期
-                max_date (date): 板块行情最晚日期
-        """
-        futures = [
-            self._sector_calc_pool.submit(
-                self._aggregate_sector_accumulation,
-                sector_code,
-                min_date,
-                max_date,
-            )
-        ]
-        futures.extend(
-            self._aggregate_sector_sliding(sector_code, min_date, max_date)
-        )
-        for future in as_completed(futures):
-            try:
-                future.result()
             except Exception as e:
                 logger.error(f"板块 {sector_code} 计算子任务失败: {e}")
+            if i % 20 == 0 or i == total:
+                logger.info(f"板块聚合进度: {i}/{total}")
 
     def _aggregate_sector_accumulation(
         self,
@@ -378,7 +362,6 @@ class MoneyFlowAggregator:
 
         running: Optional[MoneyFlowAggregation] = existing
         new_aggs: List[MoneyFlowAggregation] = []
-
         for trading_day, member_flows in daily_flows:
             day_agg = MoneyFlowAggregation.create(
                 code=sector_code,
@@ -407,63 +390,33 @@ class MoneyFlowAggregator:
         self._money_flow_agg_repo.save(*new_aggs)
         logger.info(f"保存了 {len(new_aggs)} 条板块 {sector_code} 的资金总量数据")
 
-    def _aggregate_sector_sliding(
-        self,
-        sector_code: str,
-        min_date: date,
-        max_date: date,
-    ) -> List[Future]:
-        """
-            计算板块 3/5/10/20 天滑动窗口净流入。
-            按交易日从 dc_member 取成分，汇总当日成员 flow 后再滑窗。
-        """
-        latest_of_windows = self._money_flow_agg_repo.find_latest_sliding_for_windows(
-            sector_code, self._TRADING_DAYS,
-        )
-
-        # 从 min_date 构建全日序列，各窗口自行跳过已有部分
-        daily_flows = self._sector_member_daily_flows(sector_code, min_date, max_date)
-        if not daily_flows:
-            logger.warning(f"板块 {sector_code} 在 {min_date} ~ {max_date} 没有可滑动的成员资金流")
-            return []
-
-        futures: List[Future] = []
-        for window in self._TRADING_DAYS:
-            futures.append(
-                self._sector_calc_pool.submit(
-                    self._aggregate_sector_sliding_by_window,
-                    sector_code,
-                    window,
-                    daily_flows,
-                    latest_of_windows.get(window),
-                    max_date,
-                )
-            )
-        return futures
-
     def _aggregate_sector_sliding_by_window(
         self,
         sector_code: str,
         window: int,
-        daily_flows: List[tuple[date, List[MoneyFlow]]],
-        existing: Optional[MoneyFlowAggregation],
+        min_date: date,
         max_date: date,
     ) -> None:
         """
-            对已按日汇总的板块 flow 序列做指定窗口的滑动聚合。
+            计算板块指定窗口的滑动净流入。
+            按交易日从 dc_member 取成分，汇总当日成员 flow 后再滑窗。
         """
-
+        latest_of_window = self._money_flow_agg_repo.find_latest_sliding_for_windows(
+            sector_code, [window],
+        )
+        existing = latest_of_window.get(window)
         if existing and existing.end_date >= max_date:
-            logger.info(
-                f"板块 {sector_code} 的 {window}日 净流入已统计到 {existing.end_date}。"
-            )
+            logger.info(f"板块 {sector_code} 的 {window}日 净流入已统计到 {existing.end_date}。")
+            return
+
+        daily_flows = self._sector_member_daily_flows(sector_code, min_date, max_date)
+        if not daily_flows:
+            logger.warning(f"板块 {sector_code} 在 {min_date} ~ {max_date} 没有可滑动的成员资金流")
             return
 
         count = len(daily_flows)
         if count < window:
-            logger.warning(
-                f"板块 {sector_code} 有效交易日不足 {window} 天，跳过 {window}日 滑窗"
-            )
+            logger.warning(f"板块 {sector_code} 有效交易日不足 {window} 天，跳过 {window}日 滑窗")
             return
 
         new_aggs: List[MoneyFlowAggregation] = []
