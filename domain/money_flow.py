@@ -4,31 +4,26 @@ from typing import Optional
 
 
 @dataclass
-class TsMoneyFlowData:
+class DcMoneyFlowData:
     """
-        通联个股资金流向（Tushare moneyflow）
-        接口文档：https://tushare.pro/document/2?doc_id=170
+        东财个股资金流向（Tushare moneyflow_dc）
+        接口文档：https://tushare.pro/document/2?doc_id=349
     """
-    ts_code: str
     trade_date: date
-    buy_sm_vol: int = 0
-    buy_sm_amount: float = 0.0
-    sell_sm_vol: int = 0
-    sell_sm_amount: float = 0.0
-    buy_md_vol: int = 0
-    buy_md_amount: float = 0.0
-    sell_md_vol: int = 0
-    sell_md_amount: float = 0.0
-    buy_lg_vol: int = 0
-    buy_lg_amount: float = 0.0
-    sell_lg_vol: int = 0
-    sell_lg_amount: float = 0.0
-    buy_elg_vol: int = 0
+    ts_code: str
+    name: str = ""
+    pct_change: float = 0.0
+    close: float = 0.0
+    net_amount: float = 0.0
+    net_amount_rate: float = 0.0
     buy_elg_amount: float = 0.0
-    sell_elg_vol: int = 0
-    sell_elg_amount: float = 0.0
-    net_mf_vol: int = 0
-    net_mf_amount: float = 0.0
+    buy_elg_amount_rate: float = 0.0
+    buy_lg_amount: float = 0.0
+    buy_lg_amount_rate: float = 0.0
+    buy_md_amount: float = 0.0
+    buy_md_amount_rate: float = 0.0
+    buy_sm_amount: float = 0.0
+    buy_sm_amount_rate: float = 0.0
 
 
 @dataclass
@@ -36,9 +31,9 @@ class MoneyFlow:
     """
         资金流向数据（支持任意时间粒度）
         
-        数据来源: Tushare moneyflow 接口（通联数据源）
+        数据来源: Tushare moneyflow_dc 接口（东财数据源）
         
-        接口文档：https://tushare.pro/document/2?doc_id=170
+        接口文档：https://tushare.pro/document/2?doc_id=349
     """
 
     code: str                     # 股票代码

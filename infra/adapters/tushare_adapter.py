@@ -12,7 +12,7 @@ from domain.sector import (
 from domain.stock import Stock
 from domain.ts_code_util import infer_stock_market, normalize_code, to_stock_ts_code
 from domain.daily_quote import DailyQuote
-from domain.money_flow import TsMoneyFlowData
+from domain.money_flow import DcMoneyFlowData
 from infra.config import get_market_earliest_date
 from infra.log import logger
 
@@ -186,11 +186,11 @@ class TushareAdapter:
         code: Optional[str] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-    ) -> List[TsMoneyFlowData]:
+    ) -> List[DcMoneyFlowData]:
         """
-            获取个股日级资金流向（通联 moneyflow 原始字段）。
+            获取个股日级资金流向（东财 moneyflow_dc 原始字段）。
             
-            接口文档: https://tushare.pro/document/2?doc_id=170
+            接口文档: https://tushare.pro/document/2?doc_id=349
 
             Args:
                 code: 可选的股票代码（6位纯数字）
@@ -206,38 +206,33 @@ class TushareAdapter:
             if end_date:
                 params['end_date'] = end_date.strftime('%Y%m%d')
             
-            results = self._pro.moneyflow(**params)
+            results = self._pro.moneyflow_dc(**params)
 
             if results is None or results.empty:
                 return []
 
-            rows: List[TsMoneyFlowData] = []
+            rows: List[DcMoneyFlowData] = []
             for _, row in results.iterrows():
                 ts_code = str(row.get('ts_code', '') or '').strip()
                 trade_date_raw = str(row.get('trade_date', '') or '').strip()
                 if not ts_code or not trade_date_raw:
                     continue
-                rows.append(TsMoneyFlowData(
-                    ts_code=ts_code,
+                rows.append(DcMoneyFlowData(
                     trade_date=datetime.strptime(trade_date_raw[:8], '%Y%m%d').date(),
-                    buy_sm_vol=int(self._to_float(row.get('buy_sm_vol'))),
-                    buy_sm_amount=self._to_float(row.get('buy_sm_amount')),
-                    sell_sm_vol=int(self._to_float(row.get('sell_sm_vol'))),
-                    sell_sm_amount=self._to_float(row.get('sell_sm_amount')),
-                    buy_md_vol=int(self._to_float(row.get('buy_md_vol'))),
-                    buy_md_amount=self._to_float(row.get('buy_md_amount')),
-                    sell_md_vol=int(self._to_float(row.get('sell_md_vol'))),
-                    sell_md_amount=self._to_float(row.get('sell_md_amount')),
-                    buy_lg_vol=int(self._to_float(row.get('buy_lg_vol'))),
-                    buy_lg_amount=self._to_float(row.get('buy_lg_amount')),
-                    sell_lg_vol=int(self._to_float(row.get('sell_lg_vol'))),
-                    sell_lg_amount=self._to_float(row.get('sell_lg_amount')),
-                    buy_elg_vol=int(self._to_float(row.get('buy_elg_vol'))),
+                    ts_code=ts_code,
+                    name=str(row.get('name', '') or '').strip(),
+                    pct_change=self._to_float(row.get('pct_change')),
+                    close=self._to_float(row.get('close')),
+                    net_amount=self._to_float(row.get('net_amount')),
+                    net_amount_rate=self._to_float(row.get('net_amount_rate')),
                     buy_elg_amount=self._to_float(row.get('buy_elg_amount')),
-                    sell_elg_vol=int(self._to_float(row.get('sell_elg_vol'))),
-                    sell_elg_amount=self._to_float(row.get('sell_elg_amount')),
-                    net_mf_vol=int(self._to_float(row.get('net_mf_vol'))),
-                    net_mf_amount=self._to_float(row.get('net_mf_amount')),
+                    buy_elg_amount_rate=self._to_float(row.get('buy_elg_amount_rate')),
+                    buy_lg_amount=self._to_float(row.get('buy_lg_amount')),
+                    buy_lg_amount_rate=self._to_float(row.get('buy_lg_amount_rate')),
+                    buy_md_amount=self._to_float(row.get('buy_md_amount')),
+                    buy_md_amount_rate=self._to_float(row.get('buy_md_amount_rate')),
+                    buy_sm_amount=self._to_float(row.get('buy_sm_amount')),
+                    buy_sm_amount_rate=self._to_float(row.get('buy_sm_amount_rate')),
                 ))
             return rows
         except Exception as e:
