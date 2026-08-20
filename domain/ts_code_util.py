@@ -9,6 +9,11 @@ def normalize_code(code: str) -> str:
     return code.zfill(6)
 
 
+def code_from_ts_code(ts_code: str) -> str:
+    """从 Tushare ts_code（如 000001.SZ / BK0145.DC）取本地 code。"""
+    return normalize_code(ts_code.split(".", 1)[0])
+
+
 def to_stock_ts_code(code: str) -> str:
     """将纯数字股票代码转换为 Tushare ts_code（code.SH / code.SZ / code.BJ）。"""
     code = normalize_code(code)

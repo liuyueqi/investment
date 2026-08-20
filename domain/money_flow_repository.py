@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 
 from domain.money_flow import MoneyFlow, TsMoneyFlowData
 from domain.trading_day_repository import TradingDayRepository
-from domain.ts_code_util import normalize_code
+from domain.ts_code_util import code_from_ts_code
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
@@ -176,7 +176,7 @@ class MoneyFlowRepository:
                 [
                     (
                         item.ts_code,
-                        normalize_code(item.ts_code.split(".", 1)[0]),
+                        code_from_ts_code(item.ts_code),
                         item.trade_date.isoformat(),
                         item.buy_sm_vol,
                         item.buy_sm_amount,
@@ -273,7 +273,6 @@ class MoneyFlowRepository:
             return snapshot
 
     def _load_flows_from_db(self, code: str) -> List[MoneyFlow]:
-        code = normalize_code(code)
         with get_db() as conn:
             rows = conn.execute(
                 """SELECT code, trade_date,

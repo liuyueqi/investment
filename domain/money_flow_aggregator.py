@@ -14,7 +14,7 @@ from domain.sector_repository import SectorRepository
 from domain.money_flow_repository import MoneyFlowRepository
 from domain.money_flow_aggregation_repository import MoneyFlowAggregationRepository
 from domain.trading_day_repository import TradingDayRepository
-from domain.ts_code_util import normalize_code
+from domain.ts_code_util import code_from_ts_code
 from infra.database.connection import get_db
 from infra.log import logger
 
@@ -283,7 +283,7 @@ class MoneyFlowAggregator:
     #  板块聚合（第 3、4 种）
     # ════════════════════════════════════════════════════════════
 
-    def _aggregate_sectors(self, sectors_date_range: Dict[str, tuple[date, date]]) -> None:
+    def _aggregate_sectors(self, sectors_date_range: Dict[str, tuple[str, date, date]]) -> None:
         """
             并发处理多个板块的聚合计算。
             依赖已计算好的个股聚合数据。
@@ -294,7 +294,7 @@ class MoneyFlowAggregator:
         """
 
         futures: Dict = {}
-        for sector_code, (min_date, max_date) in sectors_date_range.items():
+        for sector_code, (_, min_date, max_date) in sectors_date_range.items():
             
             # 资金总量
             future = self._default_pool.submit(
@@ -486,7 +486,7 @@ class MoneyFlowAggregator:
         members = self._sector_repo.find_dc_members_by_date(sector_code, trading_day)
         member_flows: List[MoneyFlow] = []
         for member in members:
-            member_code = normalize_code(str(member).split(".", 1)[0])
+            member_code = code_from_ts_code(str(member))
             member_flow = self._money_flow_repo.find_by_code_and_date(
                 member_code, trading_day,
             )

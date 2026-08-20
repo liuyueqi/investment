@@ -9,6 +9,7 @@ from domain.sector import (
     Sector,
     SectorType,
 )
+from domain.ts_code_util import code_from_ts_code
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
@@ -88,15 +89,16 @@ class SectorRepository:
             before = conn.total_changes
             conn.executemany(
                 """INSERT INTO dc_sectors (
-                       ts_code, trade_date, name, leading, leading_code,
+                       ts_code, code, trade_date, name, leading, leading_code,
                        pct_change, leading_pct, total_mv, turnover_rate,
                        up_num, down_num, idx_type, level,
                        created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(ts_code, trade_date) DO NOTHING""",
                 [
                     (
                         item.ts_code,
+                        code_from_ts_code(item.ts_code),
                         item.trade_date.isoformat(),
                         item.name,
                         item.leading,
@@ -128,11 +130,11 @@ class SectorRepository:
         logger.info(f"按周拉取 dc_member: 共 {len(sectors_date_range)} 个板块")
 
         total = 0
-        for seq, (ts_code, (_, sector_max_date)) in enumerate(sectors_date_range.items()):
-            member_max_date = member_dates.get(ts_code)
+        for seq, (code, (ts_code, _, sector_max_date)) in enumerate(sectors_date_range.items()):
+            member_max_date = member_dates.get(code)
             if member_max_date and member_max_date >= sector_max_date:
                 logger.info(
-                    f"{seq}: {ts_code} 成分已覆盖至 {member_max_date} "
+                    f"{seq}: {code} 成分已覆盖至 {member_max_date} "
                     f"(>= 板块 {sector_max_date})，跳过"
                 )
                 continue
@@ -142,16 +144,16 @@ class SectorRepository:
             if start_date > end_date:
                 continue
 
-            logger.info(f"{seq}: 按周拉取板块成分: {ts_code}, {start_date} ~ {end_date}")
+            logger.info(f"{seq}: 按周拉取板块成分: {code}, {start_date} ~ {end_date}")
             for week_start, week_end in iter_week_ranges(start_date, end_date):
                 week_rows = self._adapter.get_sector_members_data(ts_code, week_start, week_end)
                 if len(week_rows) >= self._DC_MEMBER_ROW_LIMIT:
-                    logger.warning(f"dc_member 分周结果达到上限 {len(week_rows)} 条，改为按日重拉: {ts_code}, {week_start} ~ {week_end}")
+                    logger.warning(f"dc_member 分周结果达到上限 {len(week_rows)} 条，改为按日重拉: {code}, {week_start} ~ {week_end}")
                     for day_start, day_end in iter_day_ranges(week_start, week_end):
                         day_rows = self._adapter.get_sector_members_data(ts_code, day_start, day_end)
                         inserted = self._save_dc_sector_members(day_rows) if day_rows else 0
                         logger.info(
-                            f"dc_member 分日写入: {ts_code}, {day_start}, "
+                            f"dc_member 分日写入: {code}, {day_start}, "
                             f"拉取 {len(day_rows)} 条, 写入 {inserted} 条"
                         )
                         total += inserted
@@ -159,7 +161,7 @@ class SectorRepository:
                     continue
                 inserted = self._save_dc_sector_members(week_rows) if week_rows else 0
                 logger.info(
-                    f"dc_member 分周写入: {ts_code}, {week_start} ~ {week_end}, "
+                    f"dc_member 分周写入: {code}, {week_start} ~ {week_end}, "
                     f"拉取 {len(week_rows)} 条, 写入 {inserted} 条"
                 )
                 total += inserted
@@ -167,19 +169,20 @@ class SectorRepository:
         logger.info(f"dc_sector_members 增量写入完成: 共写入 {total} 条")
 
     def _load_latest_dc_member_dates(self) -> Dict[str, date]:
-        """查询 dc_sector_members，按 ts_code 分组取各板块最新 trade_date。"""
+        """查询 dc_sector_members，按 code 分组取各板块最新 trade_date。"""
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT ts_code, MAX(trade_date) AS max_date
+                """SELECT code, MAX(trade_date) AS max_date
                    FROM dc_sector_members
                    WHERE is_deleted = 0
-                   GROUP BY ts_code"""
+                   GROUP BY code"""
             ).fetchall()
         result: Dict[str, date] = {}
         for row in rows:
-            if not row["max_date"]:
+            code = row["code"]
+            if not code or not row["max_date"]:
                 continue
-            result[row["ts_code"]] = datetime.strptime(row["max_date"], "%Y-%m-%d").date()
+            result[code] = datetime.strptime(row["max_date"], "%Y-%m-%d").date()
         return result
 
     def _save_dc_sector_members(self, rows: List[DCSectorMemberData]) -> int:
@@ -190,14 +193,15 @@ class SectorRepository:
             before = conn.total_changes
             conn.executemany(
                 """INSERT INTO dc_sector_members (
-                       trade_date, ts_code, con_code, name,
+                       trade_date, ts_code, code, con_code, name,
                        created_at, updated_at
-                   ) VALUES (?, ?, ?, ?, ?, ?)
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(trade_date, ts_code, con_code) DO NOTHING""",
                 [
                     (
                         item.trade_date.isoformat(),
                         item.ts_code,
+                        code_from_ts_code(item.ts_code),
                         item.con_code,
                         item.name,
                         now,
@@ -307,8 +311,8 @@ class SectorRepository:
     def find_dc_sectors_date_range(
         self,
         codes: Optional[List[str]] = None,
-    ) -> Dict[str, tuple[date, date]]:
-        """查询 dc_sectors，按 ts_code 分组返回各板块 (最早, 最晚) trade_date。
+    ) -> Dict[str, tuple[str, date, date]]:
+        """查询 dc_sectors，按 code 分组返回 (ts_code, 最早, 最晚) trade_date。
 
         Args:
             codes: 可选板块代码列表；为空则查询全部。
@@ -319,31 +323,34 @@ class SectorRepository:
                     return {}
                 placeholders = ",".join("?" * len(codes))
                 rows = conn.execute(
-                    f"""SELECT ts_code,
+                    f"""SELECT code, ts_code,
                                MIN(trade_date) AS min_date,
                                MAX(trade_date) AS max_date
                         FROM dc_sectors
                         WHERE is_deleted = 0
-                          AND ts_code IN ({placeholders})
-                        GROUP BY ts_code
-                        ORDER BY ts_code""",
+                          AND code IN ({placeholders})
+                        GROUP BY code, ts_code
+                        ORDER BY code""",
                     codes,
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    """SELECT ts_code,
+                    """SELECT code, ts_code,
                               MIN(trade_date) AS min_date,
                               MAX(trade_date) AS max_date
                        FROM dc_sectors
                        WHERE is_deleted = 0
-                       GROUP BY ts_code
-                       ORDER BY ts_code"""
+                       GROUP BY code, ts_code
+                       ORDER BY code"""
                 ).fetchall()
-        result: Dict[str, tuple[date, date]] = {}
+        result: Dict[str, tuple[str, date, date]] = {}
         for row in rows:
-            if not row["min_date"] or not row["max_date"]:
+            code = row["code"]
+            ts_code = row["ts_code"]
+            if not code or not ts_code or not row["min_date"] or not row["max_date"]:
                 continue
-            result[row["ts_code"]] = (
+            result[code] = (
+                ts_code,
                 datetime.strptime(row["min_date"], "%Y-%m-%d").date(),
                 datetime.strptime(row["max_date"], "%Y-%m-%d").date(),
             )
@@ -354,13 +361,13 @@ class SectorRepository:
         sector_code: str,
         trade_date: date,
     ) -> List[str]:
-        """查询指定板块在某交易日的成分股代码列表。"""
+        """查询指定板块在某交易日的成分股代码列表（con_code）。"""
         with get_db() as conn:
             rows = conn.execute(
                 """SELECT con_code
                    FROM dc_sector_members
                    WHERE is_deleted = 0
-                     AND ts_code = ?
+                     AND code = ?
                      AND trade_date = ?
                    ORDER BY con_code""",
                 (sector_code, trade_date.isoformat()),

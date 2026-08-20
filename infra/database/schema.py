@@ -128,7 +128,8 @@ CREATE TABLE IF NOT EXISTS trading_days (
 # 东财概念板块行情（Tushare dc_index / DCSectorData）
 CREATE_DC_SECTORS_TABLE = """
 CREATE TABLE IF NOT EXISTS dc_sectors (
-    ts_code         TEXT NOT NULL,      -- 概念代码
+    ts_code         TEXT NOT NULL,      -- 概念代码（如 BK0145.DC）
+    code            TEXT NOT NULL,      -- 板块代码（由 ts_code 计算，如 BK0145）
     trade_date      TEXT NOT NULL,      -- 交易日期
     name            TEXT NOT NULL,      -- 概念名称
     leading         TEXT NOT NULL DEFAULT '',  -- 领涨股票名称
@@ -152,7 +153,8 @@ CREATE TABLE IF NOT EXISTS dc_sectors (
 CREATE_DC_SECTOR_MEMBERS_TABLE = """
 CREATE TABLE IF NOT EXISTS dc_sector_members (
     trade_date  TEXT NOT NULL,          -- 交易日期
-    ts_code     TEXT NOT NULL,          -- 概念代码
+    ts_code     TEXT NOT NULL,          -- 概念代码（如 BK0145.DC）
+    code        TEXT NOT NULL,          -- 板块代码（由 ts_code 计算，如 BK0145）
     con_code    TEXT NOT NULL,          -- 成分代码
     name        TEXT NOT NULL DEFAULT '', -- 成分股名称
     created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -278,9 +280,9 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_sectors_sign ON sectors(sign);",
     "CREATE INDEX IF NOT EXISTS idx_sector_change_logs_sector_version ON sector_change_logs(sector_code, version);",
     "CREATE INDEX IF NOT EXISTS idx_money_flow_agg_code_tra ON money_flow_aggregation(code, trading_days, is_accumulative);",
-    "CREATE INDEX IF NOT EXISTS idx_dc_sectors_date ON dc_sectors(trade_date);",
+    "CREATE INDEX IF NOT EXISTS idx_dc_sectors_code_date ON dc_sectors(code, trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_dc_sectors_type ON dc_sectors(idx_type);",
-    "CREATE INDEX IF NOT EXISTS idx_dc_sector_members_code_date ON dc_sector_members(ts_code, trade_date);",
+    "CREATE INDEX IF NOT EXISTS idx_dc_sector_members_code_date ON dc_sector_members(code, trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_dc_sector_members_con ON dc_sector_members(con_code);",
     "CREATE INDEX IF NOT EXISTS idx_dc_money_flows_code_date ON dc_money_flows(code, trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_ts_money_flows_code_date ON ts_money_flows(code, trade_date);",
@@ -292,6 +294,20 @@ def _ensure_column(conn, table: str, column_def: str) -> None:
     current_columns = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if column_name not in current_columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
+
+
+def _backfill_dc_sector_codes(conn) -> None:
+    """已有 dc_sectors / dc_sector_members 用 ts_code 回填 code。"""
+    for table in ("dc_sectors", "dc_sector_members"):
+        conn.execute(
+            f"""UPDATE {table}
+               SET code = CASE
+                   WHEN instr(ts_code, '.') > 0
+                   THEN substr(ts_code, 1, instr(ts_code, '.') - 1)
+                   ELSE ts_code
+               END
+               WHERE code IS NULL OR code = ''"""
+        )
 
 
 def init_db() -> None:
@@ -345,13 +361,19 @@ def init_db() -> None:
             ("trading_days", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
             ("trading_days", "is_deleted INTEGER NOT NULL DEFAULT 0"),
             ("sector_change_logs", "changed_at TEXT NOT NULL DEFAULT ''"),
+            ("dc_sectors", "code TEXT NOT NULL DEFAULT ''"),
+            ("dc_sector_members", "code TEXT NOT NULL DEFAULT ''"),
         ]:
             _ensure_column(conn, table, column)
+        _backfill_dc_sector_codes(conn)
         conn.execute(
             """UPDATE sector_change_logs
                SET changed_at = created_at
                WHERE changed_at IS NULL OR changed_at = ''"""
         )
+        # 旧 idx_dc_sector_members_code_date 建在 ts_code 上，需重建为 code
+        conn.execute("DROP INDEX IF EXISTS idx_dc_sectors_date")
+        conn.execute("DROP INDEX IF EXISTS idx_dc_sector_members_code_date")
         for idx in CREATE_INDEXES:
             conn.execute(idx)
         conn.commit()
