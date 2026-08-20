@@ -1,6 +1,34 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
+
+
+@dataclass
+class TsMoneyFlowData:
+    """
+        通联个股资金流向（Tushare moneyflow）
+        接口文档：https://tushare.pro/document/2?doc_id=170
+    """
+    ts_code: str
+    trade_date: date
+    buy_sm_vol: int = 0
+    buy_sm_amount: float = 0.0
+    sell_sm_vol: int = 0
+    sell_sm_amount: float = 0.0
+    buy_md_vol: int = 0
+    buy_md_amount: float = 0.0
+    sell_md_vol: int = 0
+    sell_md_amount: float = 0.0
+    buy_lg_vol: int = 0
+    buy_lg_amount: float = 0.0
+    sell_lg_vol: int = 0
+    sell_lg_amount: float = 0.0
+    buy_elg_vol: int = 0
+    buy_elg_amount: float = 0.0
+    sell_elg_vol: int = 0
+    sell_elg_amount: float = 0.0
+    net_mf_vol: int = 0
+    net_mf_amount: float = 0.0
 
 
 @dataclass

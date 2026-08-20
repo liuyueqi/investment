@@ -12,7 +12,7 @@ from domain.sector import (
 from domain.stock import Stock
 from domain.ts_code_util import infer_stock_market, normalize_code, to_stock_ts_code
 from domain.daily_quote import DailyQuote
-from domain.money_flow import MoneyFlow
+from domain.money_flow import TsMoneyFlowData
 from infra.config import get_market_earliest_date
 from infra.log import logger
 
@@ -186,9 +186,9 @@ class TushareAdapter:
         code: Optional[str] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-    ) -> List[MoneyFlow]:
+    ) -> List[TsMoneyFlowData]:
         """
-            获取个股日级资金流向
+            获取个股日级资金流向（通联 moneyflow 原始字段）。
             
             接口文档: https://tushare.pro/document/2?doc_id=170
 
@@ -211,63 +211,35 @@ class TushareAdapter:
             if results is None or results.empty:
                 return []
 
-            money_flows = []
+            rows: List[TsMoneyFlowData] = []
             for _, row in results.iterrows():
-                
-                ts_code = row.get('ts_code', '')
-                trade_date = datetime.strptime(row['trade_date'], '%Y%m%d')
-                buy_sm_vol = row.get('buy_sm_vol', 0.0)
-                buy_sm_amount = row.get('buy_sm_amount', 0.0)
-                sell_sm_vol = row.get('sell_sm_vol', 0.0)
-                sell_sm_amount = row.get('sell_sm_amount', 0.0)
-                buy_md_vol = row.get('buy_md_vol', 0.0)
-                buy_md_amount = row.get('buy_md_amount', 0.0)
-                sell_md_vol = row.get('sell_md_vol', 0.0)
-                sell_md_amount = row.get('sell_md_amount', 0.0)
-                buy_lg_vol = row.get('buy_lg_vol', 0.0)
-                buy_lg_amount = row.get('buy_lg_amount', 0.0)
-                sell_lg_vol = row.get('sell_lg_vol', 0.0)
-                sell_lg_amount = row.get('sell_lg_amount', 0.0)
-                buy_elg_vol = row.get('buy_elg_vol', 0.0)
-                buy_elg_amount = row.get('buy_elg_amount', 0.0)
-                sell_elg_vol = row.get('sell_elg_vol', 0.0)
-                sell_elg_amount = row.get('sell_elg_amount', 0.0)
-                net_mf_vol = row.get('net_mf_vol', 0.0)
-                net_mf_amount = row.get('net_mf_amount', 0.0)
-
-                money_flow = MoneyFlow.daily(
-                    code = normalize_code(ts_code.split('.')[0] if ts_code else (code or '')),
-                    date = trade_date,
-
-                    main_cnt = net_mf_vol,                      # 净流入量(手)
-                    main_net = net_mf_amount,                   # 净流入额(万元)
-                    
-                    # 逐笔成交分类统计（特大单 >= 100万）
-                    huge_buy_cnt = buy_elg_vol,                 # 特大单成交买方笔数
-                    huge_buy_net = buy_elg_amount,              # 特大单成交买方金额(万元)
-                    huge_sell_cnt = sell_elg_vol,               # 特大单成交卖方笔数
-                    huge_sell_net = sell_elg_amount,            # 特大单成交卖方金额(万元)
-                    
-                    # 大单 20万 ~ 100万
-                    large_buy_cnt = buy_lg_vol,
-                    large_buy_net = buy_lg_amount,
-                    large_sell_cnt = sell_lg_vol,
-                    large_sell_net = sell_lg_amount,
-                    
-                    # 中单 5万 ~ 20万
-                    medium_buy_cnt = buy_md_vol,
-                    medium_buy_net = buy_md_amount,
-                    medium_sell_cnt = sell_md_vol,
-                    medium_sell_net = sell_md_amount,
-                    
-                    # 小单 5万以下
-                    small_buy_cnt = buy_sm_vol,
-                    small_buy_net = buy_sm_amount,
-                    small_sell_cnt = sell_sm_vol,
-                    small_sell_net = sell_sm_amount,
-                )
-                money_flows.append(money_flow)
-            return money_flows
+                ts_code = str(row.get('ts_code', '') or '').strip()
+                trade_date_raw = str(row.get('trade_date', '') or '').strip()
+                if not ts_code or not trade_date_raw:
+                    continue
+                rows.append(TsMoneyFlowData(
+                    ts_code=ts_code,
+                    trade_date=datetime.strptime(trade_date_raw[:8], '%Y%m%d').date(),
+                    buy_sm_vol=int(self._to_float(row.get('buy_sm_vol'))),
+                    buy_sm_amount=self._to_float(row.get('buy_sm_amount')),
+                    sell_sm_vol=int(self._to_float(row.get('sell_sm_vol'))),
+                    sell_sm_amount=self._to_float(row.get('sell_sm_amount')),
+                    buy_md_vol=int(self._to_float(row.get('buy_md_vol'))),
+                    buy_md_amount=self._to_float(row.get('buy_md_amount')),
+                    sell_md_vol=int(self._to_float(row.get('sell_md_vol'))),
+                    sell_md_amount=self._to_float(row.get('sell_md_amount')),
+                    buy_lg_vol=int(self._to_float(row.get('buy_lg_vol'))),
+                    buy_lg_amount=self._to_float(row.get('buy_lg_amount')),
+                    sell_lg_vol=int(self._to_float(row.get('sell_lg_vol'))),
+                    sell_lg_amount=self._to_float(row.get('sell_lg_amount')),
+                    buy_elg_vol=int(self._to_float(row.get('buy_elg_vol'))),
+                    buy_elg_amount=self._to_float(row.get('buy_elg_amount')),
+                    sell_elg_vol=int(self._to_float(row.get('sell_elg_vol'))),
+                    sell_elg_amount=self._to_float(row.get('sell_elg_amount')),
+                    net_mf_vol=int(self._to_float(row.get('net_mf_vol'))),
+                    net_mf_amount=self._to_float(row.get('net_mf_amount')),
+                ))
+            return rows
         except Exception as e:
             logger.error(f"获取股票 {code} 资金流向失败", e)
             return []

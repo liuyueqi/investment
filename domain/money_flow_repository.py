@@ -4,8 +4,9 @@ import time
 from typing import Dict, List, Optional, Tuple
 from datetime import date, datetime, timedelta
 
-from domain.money_flow import MoneyFlow
+from domain.money_flow import MoneyFlow, TsMoneyFlowData
 from domain.trading_day_repository import TradingDayRepository
+from domain.ts_code_util import normalize_code
 from infra.adapters.tushare_adapter import TushareAdapter
 from infra.config import get_market_earliest_date
 from infra.database.connection import get_db
@@ -13,7 +14,7 @@ from infra.log import logger
 
 
 class MoneyFlowRepository:
-    """资金流向数据仓库，管理 money_flows 表"""
+    """资金流向数据仓库，管理 ts_money_flows 表（通联 moneyflow）"""
 
     _REQUEST_INTERVAL_SECONDS = 0.3      # 每次接口请求间隔（秒）
     _CACHE_TTL_SECONDS = 24 * 60 * 60    # 缓存有效期：1 天
@@ -37,8 +38,11 @@ class MoneyFlowRepository:
         self._cache: Dict[str, Tuple[Tuple[MoneyFlow, ...], Dict[date, MoneyFlow]]] = {}
         self._cache_lock = threading.RLock()
 
-    def refresh(self, stock_codes: Optional[List[str]] = None,
-                force: bool = True) -> None:
+    def refresh(
+        self,
+        stock_codes: Optional[List[str]] = None,
+        force: bool = True,
+    ) -> None:
         """同步资金流向数据到数据库
         
         Args:
@@ -56,7 +60,7 @@ class MoneyFlowRepository:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated
-                   FROM money_flows WHERE is_deleted = 0"""
+                   FROM ts_money_flows WHERE is_deleted = 0"""
             ).fetchone()
             count = row["cnt"]
             if count == 0:
@@ -68,7 +72,7 @@ class MoneyFlowRepository:
             return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
 
     def _update_from_adapter(self, stock_codes: Optional[List[str]] = None) -> None:
-        """从适配器获取资金流向数据，增量更新到数据库"""
+        """从适配器获取资金流向原始数据，增量写入 ts_money_flows"""
         if stock_codes is None:
             stocks = self._stock_adapter.get_all_stocks()
             stock_codes = [stock.code for stock in stocks]
@@ -101,33 +105,33 @@ class MoneyFlowRepository:
             index += 1
             logger.info(f"{index}: 正在获取股票 {code} 资金流向数据 "
                   f"[{start_date} -> {today}]...")
-            flows = self._flow_adapter.get_daily_flow(code, start_date, today)
-            if flows:
-                self._save_flows_to_db(flows)
-                total_saved += len(flows)
+            rows = self._flow_adapter.get_daily_flow(code, start_date, today)
+            if rows:
+                total_saved += self._save_rows_to_db(rows)
 
             time.sleep(self._REQUEST_INTERVAL_SECONDS)
 
         logger.info(f"资金流向数据更新完成，共保存 {total_saved} 条新记录")
 
     def _load_last_flow_dates(self) -> Dict[str, Optional[date]]:
-        """查询每只股票已有的最后交易日期"""
+        """查询每只股票已有的最后交易日期（key 为 6 位 code）"""
         result: Dict[str, Optional[date]] = {}
         with get_db() as conn:
             rows = conn.execute(
                 """SELECT code, MAX(trade_date) AS max_date
-                   FROM money_flows
-                   WHERE period = 'day' AND is_deleted = 0
+                   FROM ts_money_flows
+                   WHERE is_deleted = 0
                    GROUP BY code"""
             ).fetchall()
             for row in rows:
+                code = row["code"]
+                if not code:
+                    continue
                 max_date_str = row["max_date"]
                 if max_date_str:
-                    result[row["code"]] = datetime.strptime(
-                        max_date_str, "%Y-%m-%d"
-                    ).date()
+                    result[code] = datetime.strptime(max_date_str, "%Y-%m-%d").date()
                 else:
-                    result[row["code"]] = None
+                    result[code] = None
         return result
 
     def _is_up_to_date(self, last_date: Optional[date]) -> bool:
@@ -144,48 +148,61 @@ class MoneyFlowRepository:
             raise ValueError("交易日历为空，无法获取最近交易日")
         return last
 
-    def _save_flows_to_db(self, money_flows: List[MoneyFlow]) -> None:
-        """将资金流向数据写入数据库（UPSERT，幂等安全）"""
-        if not money_flows:
-            return
+    def _save_rows_to_db(self, rows: List[TsMoneyFlowData]) -> int:
+        """将通联 moneyflow 原始行写入 ts_money_flows"""
+        if not rows:
+            return 0
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
-            for mf in money_flows:
-                trade_date = mf.time.strftime("%Y-%m-%d")
-                conn.execute(
-                    """INSERT INTO money_flows (
-                           code, trade_date, period,
-                           main_cnt, main_net,
-                           huge_buy_cnt, huge_buy_net,
-                           huge_sell_cnt, huge_sell_net,
-                           large_buy_cnt, large_buy_net,
-                           large_sell_cnt, large_sell_net,
-                           medium_buy_cnt, medium_buy_net,
-                           medium_sell_cnt, medium_sell_net,
-                           small_buy_cnt, small_buy_net,
-                           small_sell_cnt, small_sell_net,
-                           created_at, updated_at
-                       ) VALUES (?, ?, ?, ?, ?,
-                                 ?, ?, ?, ?,
-                                 ?, ?, ?, ?,
-                                 ?, ?, ?, ?,
-                                 ?, ?, ?, ?,
-                                 ?, ?)""",
+            before = conn.total_changes
+            conn.executemany(
+                """INSERT INTO ts_money_flows (
+                       ts_code, code, trade_date,
+                       buy_sm_vol, buy_sm_amount, sell_sm_vol, sell_sm_amount,
+                       buy_md_vol, buy_md_amount, sell_md_vol, sell_md_amount,
+                       buy_lg_vol, buy_lg_amount, sell_lg_vol, sell_lg_amount,
+                       buy_elg_vol, buy_elg_amount, sell_elg_vol, sell_elg_amount,
+                       net_mf_vol, net_mf_amount,
+                       created_at, updated_at
+                   ) VALUES (?, ?, ?,
+                             ?, ?, ?, ?,
+                             ?, ?, ?, ?,
+                             ?, ?, ?, ?,
+                             ?, ?, ?, ?,
+                             ?, ?,
+                             ?, ?)
+                   ON CONFLICT(ts_code, trade_date) DO NOTHING""",
+                [
                     (
-                        mf.code, trade_date, mf.period,
-                        mf.main_cnt, mf.main_net,
-                        mf.huge_buy_cnt, mf.huge_buy_net,
-                        mf.huge_sell_cnt, mf.huge_sell_net,
-                        mf.large_buy_cnt, mf.large_buy_net,
-                        mf.large_sell_cnt, mf.large_sell_net,
-                        mf.medium_buy_cnt, mf.medium_buy_net,
-                        mf.medium_sell_cnt, mf.medium_sell_net,
-                        mf.small_buy_cnt, mf.small_buy_net,
-                        mf.small_sell_cnt, mf.small_sell_net,
-                        now, now,
-                    ),
-                )
+                        item.ts_code,
+                        normalize_code(item.ts_code.split(".", 1)[0]),
+                        item.trade_date.isoformat(),
+                        item.buy_sm_vol,
+                        item.buy_sm_amount,
+                        item.sell_sm_vol,
+                        item.sell_sm_amount,
+                        item.buy_md_vol,
+                        item.buy_md_amount,
+                        item.sell_md_vol,
+                        item.sell_md_amount,
+                        item.buy_lg_vol,
+                        item.buy_lg_amount,
+                        item.sell_lg_vol,
+                        item.sell_lg_amount,
+                        item.buy_elg_vol,
+                        item.buy_elg_amount,
+                        item.sell_elg_vol,
+                        item.sell_elg_amount,
+                        item.net_mf_vol,
+                        item.net_mf_amount,
+                        now,
+                        now,
+                    )
+                    for item in rows
+                ],
+            )
+            return conn.total_changes - before
 
     def find_by_code(self, code: str, force: bool = False) -> List[MoneyFlow]:
         """
@@ -237,42 +254,6 @@ class MoneyFlowRepository:
         hi = bisect.bisect_right(flows, end_date, key=lambda f: f.time.date())
         return list(flows[lo:hi])
 
-# UNUSED: MoneyFlowRepository.get_date_range 不可达
-#     _BATCH_SIZE = 500
-#
-#     def get_date_range(self, *codes: str) -> tuple[Optional[date], Optional[date]]:
-#         """获取指定股票的最早和最晚的资金流向记录（按 code 分批查询，返回所有 code 的合并范围）"""
-#
-#         if not codes:
-#             return (None, None)
-#
-#         earliest_date: Optional[date] = None
-#         latest_date: Optional[date] = None
-#
-#         for i in range(0, len(codes), self._BATCH_SIZE):
-#
-#             batch = codes[i:i + self._BATCH_SIZE]
-#             placeholders = ','.join(['?' for _ in batch])
-#             sql = f"""SELECT
-#                                MIN(trade_date) as start_date,
-#                                MAX(trade_date) as end_date
-#                           FROM money_flows
-#                          WHERE code IN ({placeholders})
-#                            AND period = 'day'
-#                            AND is_deleted = 0"""
-#
-#             with get_db() as conn:
-#                 row = conn.execute(sql, batch).fetchone()
-#                 if row and row['start_date']:
-#                     start_date = datetime.strptime(row['start_date'], '%Y-%m-%d').date()
-#                     end_date = datetime.strptime(row['end_date'], '%Y-%m-%d').date()
-#                     if not earliest_date or start_date < earliest_date:
-#                         earliest_date = start_date
-#                     if not latest_date or end_date > latest_date:
-#                         latest_date = end_date
-#
-#         return (earliest_date, latest_date)
-
     def _get_cache(
         self, code: str, force: bool = False,
     ) -> Tuple[Tuple[MoneyFlow, ...], Dict[date, MoneyFlow]]:
@@ -292,49 +273,46 @@ class MoneyFlowRepository:
             return snapshot
 
     def _load_flows_from_db(self, code: str) -> List[MoneyFlow]:
+        code = normalize_code(code)
         with get_db() as conn:
             rows = conn.execute(
-                """SELECT code, trade_date, period,
-                          main_cnt, main_net,
-                          huge_buy_cnt, huge_buy_net,
-                          huge_sell_cnt, huge_sell_net,
-                          large_buy_cnt, large_buy_net,
-                          large_sell_cnt, large_sell_net,
-                          medium_buy_cnt, medium_buy_net,
-                          medium_sell_cnt, medium_sell_net,
-                          small_buy_cnt, small_buy_net,
-                          small_sell_cnt, small_sell_net
-                   FROM money_flows
-                   WHERE code = ? AND period = 'day' AND is_deleted = 0
+                """SELECT code, trade_date,
+                          buy_sm_vol, buy_sm_amount, sell_sm_vol, sell_sm_amount,
+                          buy_md_vol, buy_md_amount, sell_md_vol, sell_md_amount,
+                          buy_lg_vol, buy_lg_amount, sell_lg_vol, sell_lg_amount,
+                          buy_elg_vol, buy_elg_amount, sell_elg_vol, sell_elg_amount,
+                          net_mf_vol, net_mf_amount
+                   FROM ts_money_flows
+                   WHERE code = ? AND is_deleted = 0
                    ORDER BY trade_date""",
                 (code,),
             ).fetchall()
         return [self._row_to_money_flow(row) for row in rows]
 
     def _row_to_money_flow(self, row) -> MoneyFlow:
-        """将数据库行记录转换为 MoneyFlow 实体"""
+        """将 ts_money_flows 行映射为 MoneyFlow 实体"""
         trade_date = datetime.strptime(row["trade_date"], "%Y-%m-%d")
         return MoneyFlow.daily(
             code=row["code"],
             date=trade_date,
-            main_cnt=row["main_cnt"] or 0,
-            main_net=row["main_net"] or 0.0,
-            huge_buy_cnt=row["huge_buy_cnt"],
-            huge_buy_net=row["huge_buy_net"],
-            huge_sell_cnt=row["huge_sell_cnt"],
-            huge_sell_net=row["huge_sell_net"],
-            large_buy_cnt=row["large_buy_cnt"],
-            large_buy_net=row["large_buy_net"],
-            large_sell_cnt=row["large_sell_cnt"],
-            large_sell_net=row["large_sell_net"],
-            medium_buy_cnt=row["medium_buy_cnt"],
-            medium_buy_net=row["medium_buy_net"],
-            medium_sell_cnt=row["medium_sell_cnt"],
-            medium_sell_net=row["medium_sell_net"],
-            small_buy_cnt=row["small_buy_cnt"],
-            small_buy_net=row["small_buy_net"],
-            small_sell_cnt=row["small_sell_cnt"],
-            small_sell_net=row["small_sell_net"],
+            main_cnt=row["net_mf_vol"] or 0,
+            main_net=row["net_mf_amount"] or 0.0,
+            huge_buy_cnt=row["buy_elg_vol"],
+            huge_buy_net=row["buy_elg_amount"],
+            huge_sell_cnt=row["sell_elg_vol"],
+            huge_sell_net=row["sell_elg_amount"],
+            large_buy_cnt=row["buy_lg_vol"],
+            large_buy_net=row["buy_lg_amount"],
+            large_sell_cnt=row["sell_lg_vol"],
+            large_sell_net=row["sell_lg_amount"],
+            medium_buy_cnt=row["buy_md_vol"],
+            medium_buy_net=row["buy_md_amount"],
+            medium_sell_cnt=row["sell_md_vol"],
+            medium_sell_net=row["sell_md_amount"],
+            small_buy_cnt=row["buy_sm_vol"],
+            small_buy_net=row["buy_sm_amount"],
+            small_sell_cnt=row["sell_sm_vol"],
+            small_sell_net=row["sell_sm_amount"],
         )
 
     def clear_cache(self) -> None:

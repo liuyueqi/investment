@@ -162,6 +162,65 @@ CREATE TABLE IF NOT EXISTS dc_sector_members (
 );
 """
 
+# 东财个股资金流向（Tushare moneyflow_dc）
+# 接口文档: https://tushare.pro/document/2?doc_id=349
+CREATE_DC_MONEY_FLOWS_TABLE = """
+CREATE TABLE IF NOT EXISTS dc_money_flows (
+    trade_date              TEXT NOT NULL,      -- 交易日期
+    ts_code                 TEXT NOT NULL,      -- 股票代码（如 000001.SZ）
+    code                    TEXT NOT NULL,      -- 6 位股票代码（由 ts_code 计算）
+    name                    TEXT NOT NULL DEFAULT '',  -- 股票名称
+    pct_change              REAL NOT NULL DEFAULT 0.0, -- 涨跌幅
+    close                   REAL NOT NULL DEFAULT 0.0, -- 最新价
+    net_amount              REAL NOT NULL DEFAULT 0.0, -- 今日主力净流入额（万元）
+    net_amount_rate         REAL NOT NULL DEFAULT 0.0, -- 今日主力净流入净占比（%）
+    buy_elg_amount          REAL NOT NULL DEFAULT 0.0, -- 今日超大单净流入额（万元）
+    buy_elg_amount_rate     REAL NOT NULL DEFAULT 0.0, -- 今日超大单净流入占比（%）
+    buy_lg_amount           REAL NOT NULL DEFAULT 0.0, -- 今日大单净流入额（万元）
+    buy_lg_amount_rate      REAL NOT NULL DEFAULT 0.0, -- 今日大单净流入占比（%）
+    buy_md_amount           REAL NOT NULL DEFAULT 0.0, -- 今日中单净流入额（万元）
+    buy_md_amount_rate      REAL NOT NULL DEFAULT 0.0, -- 今日中单净流入占比（%）
+    buy_sm_amount           REAL NOT NULL DEFAULT 0.0, -- 今日小单净流入额（万元）
+    buy_sm_amount_rate      REAL NOT NULL DEFAULT 0.0, -- 今日小单净流入占比（%）
+    created_at              TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at              TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    is_deleted              INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (ts_code, trade_date)
+);
+"""
+
+# 通联个股资金流向（Tushare moneyflow）
+# 接口文档: https://tushare.pro/document/2?doc_id=170
+CREATE_TS_MONEY_FLOWS_TABLE = """
+CREATE TABLE IF NOT EXISTS ts_money_flows (
+    ts_code             TEXT NOT NULL,      -- TS代码（如 000001.SZ）
+    code                TEXT NOT NULL,      -- 6 位股票代码（由 ts_code 计算）
+    trade_date          TEXT NOT NULL,      -- 交易日期
+    buy_sm_vol          INTEGER NOT NULL DEFAULT 0,  -- 小单买入量（手）
+    buy_sm_amount       REAL NOT NULL DEFAULT 0.0,   -- 小单买入金额（万元）
+    sell_sm_vol         INTEGER NOT NULL DEFAULT 0,  -- 小单卖出量（手）
+    sell_sm_amount      REAL NOT NULL DEFAULT 0.0,   -- 小单卖出金额（万元）
+    buy_md_vol          INTEGER NOT NULL DEFAULT 0,  -- 中单买入量（手）
+    buy_md_amount       REAL NOT NULL DEFAULT 0.0,   -- 中单买入金额（万元）
+    sell_md_vol         INTEGER NOT NULL DEFAULT 0,  -- 中单卖出量（手）
+    sell_md_amount      REAL NOT NULL DEFAULT 0.0,   -- 中单卖出金额（万元）
+    buy_lg_vol          INTEGER NOT NULL DEFAULT 0,  -- 大单买入量（手）
+    buy_lg_amount       REAL NOT NULL DEFAULT 0.0,   -- 大单买入金额（万元）
+    sell_lg_vol         INTEGER NOT NULL DEFAULT 0,  -- 大单卖出量（手）
+    sell_lg_amount      REAL NOT NULL DEFAULT 0.0,   -- 大单卖出金额（万元）
+    buy_elg_vol         INTEGER NOT NULL DEFAULT 0,  -- 特大单买入量（手）
+    buy_elg_amount      REAL NOT NULL DEFAULT 0.0,   -- 特大单买入金额（万元）
+    sell_elg_vol        INTEGER NOT NULL DEFAULT 0,  -- 特大单卖出量（手）
+    sell_elg_amount     REAL NOT NULL DEFAULT 0.0,   -- 特大单卖出金额（万元）
+    net_mf_vol          INTEGER NOT NULL DEFAULT 0,  -- 净流入量（手）
+    net_mf_amount       REAL NOT NULL DEFAULT 0.0,   -- 净流入额（万元）
+    created_at          TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    is_deleted          INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (ts_code, trade_date)
+);
+"""
+
 # 资金流聚合数据（与原始 money_flows 数据分离，按 code + start_date + end_date + is_accumulative 唯一标识）
 CREATE_MONEY_FLOW_AGGREGATION_TABLE = """
 CREATE TABLE IF NOT EXISTS money_flow_aggregation (
@@ -223,6 +282,8 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_dc_sectors_type ON dc_sectors(idx_type);",
     "CREATE INDEX IF NOT EXISTS idx_dc_sector_members_code_date ON dc_sector_members(ts_code, trade_date);",
     "CREATE INDEX IF NOT EXISTS idx_dc_sector_members_con ON dc_sector_members(con_code);",
+    "CREATE INDEX IF NOT EXISTS idx_dc_money_flows_code_date ON dc_money_flows(code, trade_date);",
+    "CREATE INDEX IF NOT EXISTS idx_ts_money_flows_code_date ON ts_money_flows(code, trade_date);",
 ]
 
 
@@ -247,6 +308,8 @@ def init_db() -> None:
         conn.execute(CREATE_TRADING_DAYS_TABLE)
         conn.execute(CREATE_DC_SECTORS_TABLE)
         conn.execute(CREATE_DC_SECTOR_MEMBERS_TABLE)
+        conn.execute(CREATE_DC_MONEY_FLOWS_TABLE)
+        conn.execute(CREATE_TS_MONEY_FLOWS_TABLE)
         conn.execute(CREATE_MONEY_FLOW_AGGREGATION_TABLE)
         for table, column in [
             ("stocks", "ts_code TEXT"),
