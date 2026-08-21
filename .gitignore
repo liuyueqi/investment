@@ -48,5 +48,5 @@ dist/
 *.db-shm
 *.db-wal
 data/
-logs/investment.log*
+logs/*.log*
 test.py

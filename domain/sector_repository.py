@@ -120,7 +120,10 @@ class SectorRepository:
             return conn.total_changes - before
 
     def _update_sector_members_data(self) -> None:
-        """增量同步东财板块成分到 dc_sector_members。"""
+        """
+            增量同步东财板块成分到 dc_sector_members。
+        """
+        logger.info("查询 dc_sectors 日期范围，用于确定需要拉取的板块成分")
         sectors_date_range = self.find_dc_sectors_date_range()
         if not sectors_date_range:
             logger.warning("dc_sectors 无数据，跳过成分拉取")

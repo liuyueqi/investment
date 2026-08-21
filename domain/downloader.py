@@ -108,7 +108,7 @@ class Downloader:
             for stock in stocks[:5]:
                 logger.info(f"  {stock.code} - {stock.name} ({stock.market})")
 
-    def _download_sectors(self, stock_codes: List[str]) -> None:
+    def _download_sectors(self) -> None:
         """下载板块数据到数据库"""
         logger.info(f"\n{SEPARATOR}")
         logger.info("下载板块数据")
@@ -172,7 +172,6 @@ class Downloader:
         Args:
             scope: 下载范围，支持 stock / sector / quote / flow。
                    为空则依次下载全部：stock → sector → quote → flow。
-                   无论 scope 如何，都会先刷新交易日历（incr=True, force=False）。
 
         依赖关系：
             - trading_days 每次 download 都会刷新

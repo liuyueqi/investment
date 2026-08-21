@@ -25,7 +25,6 @@ _EXCHANGE_TO_MARKET = {
 class TushareAdapter:
     """基于 Tushare Pro 的数据适配器"""
 
-    _TOKEN_FILE_ENV = 'TUSHARE_TOKEN_FILE'
     _DEFAULT_TOKEN_FILE = Path(".tushare_token")
 
     def __init__(self):
@@ -36,7 +35,7 @@ class TushareAdapter:
 
     def _load_token(self) -> str:
 
-        token_file = Path(".tushare_token").resolve()
+        token_file = self._DEFAULT_TOKEN_FILE.resolve()
         if not token_file.exists():
             raise FileNotFoundError(
                 f'Tushare token file not found: {token_file}.\n'

@@ -1,9 +1,5 @@
 """A 股 / 指数代码与 Tushare ts_code 转换工具"""
 
-import re
-
-_LETTER_PREFIX_INDEX_CODE = re.compile(r"^[A-Z]+\d+$")
-
 
 def normalize_code(code: str) -> str:
     return code.zfill(6)

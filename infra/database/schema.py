@@ -288,28 +288,6 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_ts_money_flows_code_date ON ts_money_flows(code, trade_date);",
 ]
 
-
-def _ensure_column(conn, table: str, column_def: str) -> None:
-    column_name = column_def.split()[0]
-    current_columns = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-    if column_name not in current_columns:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
-
-
-def _backfill_dc_sector_codes(conn) -> None:
-    """已有 dc_sectors / dc_sector_members 用 ts_code 回填 code。"""
-    for table in ("dc_sectors", "dc_sector_members"):
-        conn.execute(
-            f"""UPDATE {table}
-               SET code = CASE
-                   WHEN instr(ts_code, '.') > 0
-                   THEN substr(ts_code, 1, instr(ts_code, '.') - 1)
-                   ELSE ts_code
-               END
-               WHERE code IS NULL OR code = ''"""
-        )
-
-
 def init_db() -> None:
     """初始化数据库：创建所有表（幂等，多次运行安全）"""
     conn = get_connection()
@@ -327,55 +305,10 @@ def init_db() -> None:
         conn.execute(CREATE_DC_MONEY_FLOWS_TABLE)
         conn.execute(CREATE_TS_MONEY_FLOWS_TABLE)
         conn.execute(CREATE_MONEY_FLOW_AGGREGATION_TABLE)
-        for table, column in [
-            ("stocks", "ts_code TEXT"),
-            ("stocks", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
-            ("stocks", "is_deleted INTEGER NOT NULL DEFAULT 0"),
-            ("sectors", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
-            ("sectors", "is_deleted INTEGER NOT NULL DEFAULT 0"),
-            ("sectors", "sign TEXT NOT NULL DEFAULT ''"),
-            ("sectors", "version INTEGER NOT NULL DEFAULT 0"),
-            ("sector_members", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
-            ("sector_members", "is_deleted INTEGER NOT NULL DEFAULT 0"),
-            ("money_flows", "huge_buy_cnt INTEGER"),
-            ("money_flows", "huge_buy_net REAL"),
-            ("money_flows", "huge_sell_cnt INTEGER"),
-            ("money_flows", "huge_sell_net REAL"),
-            ("money_flows", "large_buy_cnt INTEGER"),
-            ("money_flows", "large_buy_net REAL"),
-            ("money_flows", "large_sell_cnt INTEGER"),
-            ("money_flows", "large_sell_net REAL"),
-            ("money_flows", "medium_buy_cnt INTEGER"),
-            ("money_flows", "medium_buy_net REAL"),
-            ("money_flows", "medium_sell_cnt INTEGER"),
-            ("money_flows", "medium_sell_net REAL"),
-            ("money_flows", "small_buy_cnt INTEGER"),
-            ("money_flows", "small_buy_net REAL"),
-            ("money_flows", "small_sell_cnt INTEGER"),
-            ("money_flows", "small_sell_net REAL"),
-            ("money_flows", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
-            ("money_flows", "is_deleted INTEGER NOT NULL DEFAULT 0"),
-            ("daily_quotes", "change REAL NOT NULL DEFAULT 0.0"),
-            ("daily_quotes", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
-            ("daily_quotes", "is_deleted INTEGER NOT NULL DEFAULT 0"),
-            ("trading_days", "created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))"),
-            ("trading_days", "is_deleted INTEGER NOT NULL DEFAULT 0"),
-            ("sector_change_logs", "changed_at TEXT NOT NULL DEFAULT ''"),
-            ("dc_sectors", "code TEXT NOT NULL DEFAULT ''"),
-            ("dc_sector_members", "code TEXT NOT NULL DEFAULT ''"),
-        ]:
-            _ensure_column(conn, table, column)
-        _backfill_dc_sector_codes(conn)
-        conn.execute(
-            """UPDATE sector_change_logs
-               SET changed_at = created_at
-               WHERE changed_at IS NULL OR changed_at = ''"""
-        )
-        # 旧 idx_dc_sector_members_code_date 建在 ts_code 上，需重建为 code
-        conn.execute("DROP INDEX IF EXISTS idx_dc_sectors_date")
-        conn.execute("DROP INDEX IF EXISTS idx_dc_sector_members_code_date")
+
         for idx in CREATE_INDEXES:
             conn.execute(idx)
+
         conn.commit()
         logger.info(f"数据库初始化完成: {conn.execute('PRAGMA database_list').fetchone()}")
         logger.info(f"数据库文件路径: {DB_PATH}")

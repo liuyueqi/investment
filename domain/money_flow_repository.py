@@ -103,12 +103,14 @@ class MoneyFlowRepository:
                 continue
 
             index += 1
-            logger.info(f"{index}: 正在获取股票 {code} 资金流向数据 "
-                  f"[{start_date} -> {today}]...")
+            logger.info(f"{index}: 正在获取股票 {code} 资金流向数据 [{start_date} -> {today}]...")
             rows = self._flow_adapter.get_daily_flow(code, start_date, today)
             if rows:
                 total_saved += self._save_rows_to_db(rows)
-
+                logger.info(f"{index}: 保存 {len(rows)} 条数据到数据库")
+            else:
+                logger.warning(f"{index}: 没有获取到股票 {code} 的资金流向数据")
+                
             time.sleep(self._REQUEST_INTERVAL_SECONDS)
 
         logger.info(f"资金流向数据更新完成，共保存 {total_saved} 条新记录")

@@ -17,12 +17,12 @@ class TradingDayRepository:
         self._cache: Optional[Tuple[Tuple[date, ...], frozenset[date]]] = None
         self._cache_lock = threading.RLock()
 
-    def refresh(self, incr: bool = True, force: bool = False) -> None:
+    def refresh(self, incremental: bool = True, force: bool = False) -> None:
         """
             同步交易日历到数据库。
 
             Args:
-                incr: 是否增量更新。False 时清空表后全量写入。
+                incremental: 是否增量更新。False 时清空表后全量写入。
                 force: 是否强制更新。False 且表中最新交易日已是今天时跳过拉取。
         """
         if not force and self._latest_is_today():
@@ -34,7 +34,7 @@ class TradingDayRepository:
             logger.warning("获取交易日历失败或为空，跳过刷新")
             return
 
-        if incr:
+        if incremental:
             self._insert_new(trading_days)
         else:
             self._replace_all(trading_days)
