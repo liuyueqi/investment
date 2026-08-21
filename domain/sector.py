@@ -1,8 +1,7 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from hashlib import sha256
-from typing import List, Optional
+from typing import Optional
 
 
 class SectorType(Enum):
@@ -29,38 +28,6 @@ class Sector:
     name: str
     type: SectorType
     version: int = 0
-    members: List[str] = field(default_factory=list)
-    _sign: str = field(default="", repr=False, compare=False)
-
-    def add_member(self, stock_code: str) -> None:
-        """添加成分股代码（去重）"""
-        if stock_code not in self.members:
-            self.members.append(stock_code)
-            self._sign = ""
-
-    def copy(self) -> "Sector":
-        """浅拷贝板块（members 列表独立）。"""
-        return Sector(
-            code=self.code,
-            name=self.name,
-            type=self.type,
-            version=self.version,
-            members=list(self.members),
-        )
-
-    @property
-    def sign(self) -> str:
-        """
-            成分股集合签名，成员变动时变化
-        """
-
-        if self._sign:
-            return self._sign
-
-        payload = ",".join(sorted(self.members))
-        payload = f"{self.code}|{self.name}|{self.type}|{payload}"
-        self._sign = sha256(payload.encode()).hexdigest()
-        return self._sign
 
     def __str__(self) -> str:
         return f"{self.name}（{self.code}）"

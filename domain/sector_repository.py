@@ -17,7 +17,7 @@ from infra.log import logger
 
 
 class SectorRepository:
-    """板块数据仓库，管理 sectors 表和 sector_members 表"""
+    """板块数据仓库：dc_* 增量同步，sectors 快照查询"""
 
     _CACHE_TTL_SECONDS = 24 * 60 * 60  # 缓存有效期：1 天
     _DC_MEMBER_ROW_LIMIT = 8000
@@ -26,7 +26,7 @@ class SectorRepository:
         self._adapter = adapter
 
     def refresh(self, force: bool = False) -> None:
-        """同步外部板块快照到数据库，并写入变更日志。"""
+        """同步外部板块快照到数据库。"""
         if not force and self._latest():
             logger.info("数据库缓存有效，跳过刷新")
             return
@@ -38,7 +38,7 @@ class SectorRepository:
         with get_db() as conn:
             row = conn.execute(
                 """SELECT COUNT(*) AS cnt, MAX(updated_at) AS max_updated
-                   FROM sectors WHERE is_deleted = 0"""
+                   FROM dc_sectors WHERE is_deleted = 0"""
             ).fetchone()
             count = row["cnt"]
             if count == 0:
@@ -50,12 +50,13 @@ class SectorRepository:
             return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
 
     def _update_sector_data(self) -> None:
-        """增量同步东财板块行情到 dc_sectors。"""
+        """增量同步东财板块行情到 dc_sectors，并去重写入 sectors。"""
         latest_date = self._load_latest_dc_sector_date()
         start_date = latest_date if latest_date else get_market_earliest_date()
         end_date = date.today()
         if start_date >= end_date:
             logger.info(f"dc_sectors 已覆盖至 {start_date}，无需拉取")
+            self._sync_sectors_from_dc()
             return
 
         logger.info(f"按日拉取 dc_index: {start_date} ~ {end_date}")
@@ -69,6 +70,7 @@ class SectorRepository:
             total += inserted
             time.sleep(0.1)
         logger.info(f"dc_sectors 增量写入完成: {start_date} ~ {end_date}, 共写入 {total} 条")
+        self._sync_sectors_from_dc()
 
     def _load_latest_dc_sector_date(self) -> Optional[date]:
         with get_db() as conn:
@@ -80,6 +82,37 @@ class SectorRepository:
         if not row or not row["max_date"]:
             return None
         return datetime.strptime(row["max_date"], "%Y-%m-%d").date()
+
+    def _sync_sectors_from_dc(self) -> None:
+        """将 dc_sectors 按 code 去重（取最新交易日）写入 sectors，已存在则跳过。"""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with get_db() as conn:
+            before = conn.total_changes
+            conn.execute(
+                """INSERT INTO sectors (code, name, type, created_at, updated_at)
+                   SELECT d.code,
+                          d.name,
+                          CASE d.idx_type
+                              WHEN '行业板块' THEN '行业'
+                              WHEN '概念板块' THEN '概念'
+                              WHEN '地域板块' THEN '地区'
+                              ELSE 'UNKNOWN'
+                          END,
+                          ?,
+                          ?
+                   FROM dc_sectors d
+                   INNER JOIN (
+                       SELECT code, MAX(trade_date) AS max_date
+                       FROM dc_sectors
+                       WHERE is_deleted = 0
+                       GROUP BY code
+                   ) t ON d.code = t.code AND d.trade_date = t.max_date
+                   WHERE d.is_deleted = 0
+                   ON CONFLICT(code) DO NOTHING""",
+                (now, now),
+            )
+            inserted = conn.total_changes - before
+        logger.info(f"sectors 同步完成: 新增 {inserted} 条")
 
     def _save_dc_sectors(self, rows: List[DCSectorData]) -> int:
         if not rows:
@@ -216,7 +249,7 @@ class SectorRepository:
             return conn.total_changes - before
 
     def find_by_code(self, code: str) -> Optional[Sector]:
-        """根据板块代码查询板块信息及成分股"""
+        """根据板块代码查询 sectors。"""
         with get_db() as conn:
             row = conn.execute(
                 """SELECT code, name, type, version
@@ -226,27 +259,15 @@ class SectorRepository:
             ).fetchone()
             if not row:
                 return None
-
-            member_rows = conn.execute(
-                """SELECT stock_code
-                   FROM sector_members
-                   WHERE sector_code = ? AND is_deleted = 0
-                   ORDER BY stock_code""",
-                (code,),
-            ).fetchall()
-            members = [r["stock_code"] for r in member_rows]
-
             return Sector(
                 code=row["code"],
                 name=row["name"],
                 type=SectorType(row["type"]),
                 version=row["version"],
-                members=members,
             )
 
     def find_by_codes(self, codes: Optional[List[str]]) -> List[Sector]:
-        """根据一组板块代码批量查询板块信息及成分股"""
-
+        """根据一组板块代码批量查询 sectors。"""
         if not codes:
             return []
         placeholders = ",".join("?" * len(codes))
@@ -258,30 +279,18 @@ class SectorRepository:
                     ORDER BY code""",
                 codes,
             ).fetchall()
-
-            sectors = []
-            for row in rows:
-                member_rows = conn.execute(
-                    """SELECT stock_code
-                       FROM sector_members
-                       WHERE sector_code = ? AND is_deleted = 0
-                       ORDER BY stock_code""",
-                    (row["code"],),
-                ).fetchall()
-                members = [r["stock_code"] for r in member_rows]
-
-                sectors.append(Sector(
+            return [
+                Sector(
                     code=row["code"],
                     name=row["name"],
                     type=SectorType(row["type"]),
                     version=row["version"],
-                    members=members,
-                ))
-
-            return sectors
+                )
+                for row in rows
+            ]
 
     def find_all(self) -> List[Sector]:
-        """获取所有板块信息及成分股"""
+        """获取 sectors 全部板块。"""
         with get_db() as conn:
             rows = conn.execute(
                 """SELECT code, name, type, version
@@ -289,27 +298,15 @@ class SectorRepository:
                    WHERE is_deleted = 0
                    ORDER BY code"""
             ).fetchall()
-
-            sectors = []
-            for row in rows:
-                member_rows = conn.execute(
-                    """SELECT stock_code
-                       FROM sector_members
-                       WHERE sector_code = ? AND is_deleted = 0
-                       ORDER BY stock_code""",
-                    (row["code"],),
-                ).fetchall()
-                members = [r["stock_code"] for r in member_rows]
-
-                sectors.append(Sector(
+            return [
+                Sector(
                     code=row["code"],
                     name=row["name"],
                     type=SectorType(row["type"]),
                     version=row["version"],
-                    members=members,
-                ))
-
-            return sectors
+                )
+                for row in rows
+            ]
 
     def find_dc_sectors_date_range(
         self,
