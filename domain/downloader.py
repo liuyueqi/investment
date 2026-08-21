@@ -217,12 +217,12 @@ class Downloader:
 
         if download_all:
             # scope 为空：严格依次下载全部
-            self._download_sectors(codes)
+            self._download_sectors()
             self._download_daily_quotes(codes)
             self._download_money_flows(codes)
         else:
             if DownloadScope.SECTOR in dependent:
-                self._download_sectors(codes)
+                self._download_sectors()
 
             parallel_tasks = []
             if DownloadScope.QUOTE in dependent:
