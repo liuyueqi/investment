@@ -188,13 +188,13 @@ class Dashboard:
         x_title: str = '日期',
     ) -> None:
         layout = dict(
-            title=title,
+            title=dict(text=title, y=0.98, pad=dict(b=16)),
             xaxis_title=x_title,
             yaxis_title=y_title,
             hovermode='x unified',
             template='plotly_white',
             height=height,
-            margin=dict(l=40, r=60 if has_quote else 40, t=60, b=40),
+            margin=dict(l=40, r=60 if has_quote else 40, t=100, b=40),
             legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
         )
         if has_quote:
@@ -215,6 +215,24 @@ class Dashboard:
             page_title="资金流向看板",
             page_icon="📊",
             layout="wide",
+        )
+        st.markdown(
+            """
+            <style>
+            [data-testid="stMetricValue"] {
+                font-size: 1.1rem !important;
+                white-space: nowrap;
+                overflow: visible;
+            }
+            [data-testid="stMetricLabel"] {
+                font-size: 0.85rem !important;
+            }
+            [data-testid="stMetricDelta"] {
+                font-size: 0.8rem !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
         )
 
         # ── 获取容器中的仓库 ─────────────────────────────────────
@@ -338,7 +356,6 @@ class Dashboard:
 
         # ── 主界面 ─────────────────────────────────────────────────
         st.title(f"{entity_type}：{selected_name}（{selected_code}）")
-        st.markdown("---")
 
         quotes: List[DailyQuote] = []
         if show_quote:
@@ -347,27 +364,59 @@ class Dashboard:
         accumulations = _get_accumulation_data(selected_code)
 
         if accumulations:
-            latest = accumulations[-1]
+            data_min = accumulations[0].end_date
+            data_max = accumulations[-1].end_date
+            st.sidebar.markdown("---")
+            date_range = st.sidebar.date_input(
+                "筛选时间窗口",
+                value=(data_min, data_max),
+                min_value=data_min,
+                max_value=data_max,
+                help="按 end_date 过滤累计与滑动窗口走势",
+            )
+            if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+                range_start, range_end = date_range[0], date_range[1]
+            else:
+                range_start, range_end = data_min, data_max
+            if range_start > range_end:
+                range_start, range_end = range_end, range_start
+
+            filtered = [
+                a for a in accumulations
+                if range_start <= a.end_date <= range_end
+            ]
+            if not filtered:
+                st.warning("所选时间窗口内没有累计净流入数据，请调整筛选区间。")
+                st.stop()
+
+            latest = filtered[-1]
             cols = st.columns(5 if quotes else 4)
-            cols[0].metric("统计区间", f"{accumulations[0].end_date} ~ {latest.end_date}")
-            cols[1].metric("交易天数", f"{latest.trading_days} 天")
-            prev = accumulations[-2].main_net if len(accumulations) > 1 else 0
+            cols[0].metric("统计区间", f"{filtered[0].end_date} ~ {latest.end_date}")
+            cols[1].metric("区间天数", f"{len(filtered)} 天")
+            prev = filtered[-2].main_net if len(filtered) > 1 else latest.main_net
             cols[2].metric(
                 "累计净流入", f"{latest.main_net:,.0f} 万元",
                 delta=f"{latest.main_net - prev:,.0f}",
             )
             cols[3].metric("累计笔数", f"{latest.main_cnt:,}")
             if quotes:
-                latest_quote = quotes[-1]
+                quotes_in_range = [
+                    q for q in quotes
+                    if range_start <= q.date <= range_end
+                ]
+                latest_quote = quotes_in_range[-1] if quotes_in_range else quotes[-1]
                 cols[4].metric(
                     "最新收盘", f"{latest_quote.close:.2f} 元",
                     delta=f"{latest_quote.pct_chg:.2f}%",
                 )
             st.markdown("---")
 
-            quote_for_plot = quotes if show_quote else None
+            quote_for_plot = [
+                q for q in quotes
+                if range_start <= q.date <= range_end
+            ] if show_quote else None
             _plot_accumulation(
-                accumulations,
+                filtered,
                 f"{selected_name} 累计净流入走势",
                 quotes=quote_for_plot,
             )
@@ -384,6 +433,10 @@ class Dashboard:
                 for tab, window in zip(tabs, windows):
                     with tab:
                         sliding = _agg_repo.find_by_trading_days(selected_code, window)
+                        sliding = [
+                            a for a in sliding
+                            if range_start <= a.end_date <= range_end
+                        ]
                         if sliding:
                             _plot_sliding(
                                 sliding,
@@ -392,7 +445,7 @@ class Dashboard:
                                 quotes=quote_for_plot,
                             )
                         else:
-                            st.info(f"暂无 {window}日 滑动窗口数据，请先执行 aggregate 命令。")
+                            st.info(f"所选时间窗口内暂无 {window}日 滑动窗口数据。")
         else:
             st.warning("暂无累计净流入数据。请先在控制台执行 `download` 和 `aggregate` 命令。")
 

@@ -594,7 +594,7 @@ def validate_sector(
     report: ValidationReport,
     *,
     codes: Optional[List[str]] = None,
-    sample: int = 20,
+    sample: int = 100,
     seed: Optional[int] = None,
 ) -> None:
     validation_start = get_market_earliest_date()
@@ -637,8 +637,8 @@ def main() -> int:
     parser.add_argument("--code", nargs="+", metavar="CODE", help="指定代码")
     parser.add_argument("--limit", type=int, metavar="N", help="个股最多检查 N 只")
     parser.add_argument(
-        "--sample", type=int, default=20, metavar="N",
-        help="板块随机抽样数（默认 20）",
+        "--sample", type=int, default=100, metavar="N",
+        help="板块随机抽样数（默认 100）",
     )
     parser.add_argument("--seed", type=int, default=None, help="板块抽样随机种子")
     parser.add_argument("--verbose", "-v", action="store_true", help="输出全部问题详情")

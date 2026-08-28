@@ -52,25 +52,24 @@ class StockRepository:
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_db() as conn:
-            for stock in stocks:
-                existing = conn.execute(
-                    """SELECT 1 FROM stocks WHERE code = ?""",
-                    (stock.code,),
-                ).fetchone()
-                if existing:
-                    conn.execute(
-                        """UPDATE stocks
-                           SET name = ?, market = ?, updated_at = ?, is_deleted = 0
-                           WHERE code = ?""",
-                        (stock.name, stock.market, now, stock.code),
-                    )
-                else:
-                    conn.execute(
-                        """INSERT INTO stocks (code, name, market, created_at, updated_at)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (stock.code, stock.name, stock.market, now, now),
-                    )
-        logger.info(f"从适配器获取到 {len(stocks)} 只股票，并已存入数据库")
+            before = conn.total_changes
+            conn.executemany(
+                """INSERT INTO stocks (code, name, market, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(code) DO UPDATE SET
+                       name = excluded.name,
+                       market = excluded.market,
+                       updated_at = excluded.updated_at,
+                       is_deleted = 0""",
+                [
+                    (stock.code, stock.name, stock.market, now, now)
+                    for stock in stocks
+                ],
+            )
+            changed = conn.total_changes - before
+        logger.info(
+            f"从适配器获取到 {len(stocks)} 只股票，写入/更新 {changed} 条"
+        )
 
     def find_all(self) -> List[Stock]:
         """查询所有未删除的股票"""
