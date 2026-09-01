@@ -171,12 +171,12 @@ class Downloader:
 
         Args:
             scope: 下载范围，支持 stock / sector / quote / flow。
-                   为空则依次下载全部：stock → sector → quote → flow。
+                   为空则下载全部：stock 后并行 sector / quote / flow。
 
         依赖关系：
             - trading_days 每次 download 都会刷新
-            - stock 独立下载
-            - sector / quote / flow 均依赖 stock_repository 中的最新股票列表
+            - stock 独立下载（须先于 sector / quote / flow）
+            - sector / quote / flow 均依赖 stock_repository 中的最新股票列表，可并行
         """
         scopes = self._resolve_scopes(scope)
         download_all = scopes == _ALL_SCOPES
@@ -216,26 +216,20 @@ class Downloader:
         logger.info(f"依赖股票列表共 {len(codes)} 只（来自 stock_repository）")
 
         if download_all:
-            # scope 为空：严格依次下载全部
-            self._download_sectors()
-            self._download_daily_quotes(codes)
-            self._download_money_flows(codes)
+            self._run_tasks([
+                ("板块", self._download_sectors),
+                ("日线行情", lambda: self._download_daily_quotes(codes)),
+                ("资金流向", lambda: self._download_money_flows(codes)),
+            ])
         else:
+            tasks = []
             if DownloadScope.SECTOR in dependent:
-                self._download_sectors()
-
-            parallel_tasks = []
+                tasks.append(("板块", self._download_sectors))
             if DownloadScope.QUOTE in dependent:
-                parallel_tasks.append((
-                    "日线行情",
-                    lambda: self._download_daily_quotes(codes),
-                ))
+                tasks.append(("日线行情", lambda: self._download_daily_quotes(codes)))
             if DownloadScope.FLOW in dependent:
-                parallel_tasks.append((
-                    "资金流向",
-                    lambda: self._download_money_flows(codes),
-                ))
-            self._run_tasks(parallel_tasks)
+                tasks.append(("资金流向", lambda: self._download_money_flows(codes)))
+            self._run_tasks(tasks)
 
         elapsed = time.time() - start_time
         logger.info(f"\n{SEPARATOR}")
