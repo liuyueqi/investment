@@ -1,4 +1,4 @@
-"""验证资金流聚合正确率（个股全量 / 板块抽样）。
+"""验证资金流聚合正确率（个股默认抽样 500，板块默认抽样 100）。
 
 检查 accumulation / sliding(3/5/10/20)：齐全连续且数值正确。
 
@@ -7,7 +7,8 @@
   python test/assert_flow_aggregation.py stock
   python test/assert_flow_aggregation.py sector
   python test/assert_flow_aggregation.py stock --code 000001
-  python test/assert_flow_aggregation.py sector --sample 30 --seed 42 -v
+  python test/assert_flow_aggregation.py stock --stock-sample 500 --seed 42 -v
+  python test/assert_flow_aggregation.py sector --sector-sample 100 --seed 42 -v
 """
 
 from __future__ import annotations
@@ -402,16 +403,29 @@ def validate_stock(
     report: ValidationReport,
     *,
     codes: Optional[List[str]] = None,
-    limit: Optional[int] = None,
+    sample: int = 500,
+    seed: Optional[int] = None,
 ) -> None:
     validation_start = get_market_earliest_date()
     validation_end = validation_end_date()
     print("开始验证个股资金流聚合...")
-    stock_codes = _load_stock_codes(conn, exclude_bj=True)
+    all_codes = _load_stock_codes(conn, exclude_bj=True)
     if codes:
-        stock_codes = [c for c in stock_codes if c in set(codes)]
-    if limit is not None:
-        stock_codes = stock_codes[:limit]
+        stock_codes = [c for c in all_codes if c in set(codes)]
+    else:
+        if not all_codes:
+            report.add(Issue(
+                "market", "*", "stock",
+                "stocks 表无有效沪深个股，请先 download stock",
+            ))
+            return
+        rng = random.Random(seed)
+        k = min(sample, len(all_codes))
+        stock_codes = rng.sample(all_codes, k)
+        print(
+            f"随机抽样 {k} 只股票"
+            + (f"（seed={seed}）" if seed is not None else "")
+        )
     _check_stock_completeness(
         conn, report, stock_codes, validation_start, validation_end,
     )
@@ -635,12 +649,15 @@ def main() -> int:
         help="stock / sector；省略则先 stock 再 sector",
     )
     parser.add_argument("--code", nargs="+", metavar="CODE", help="指定代码")
-    parser.add_argument("--limit", type=int, metavar="N", help="个股最多检查 N 只")
     parser.add_argument(
-        "--sample", type=int, default=100, metavar="N",
+        "--stock-sample", type=int, default=500, metavar="N",
+        help="个股随机抽样数（默认 500）",
+    )
+    parser.add_argument(
+        "--sector-sample", type=int, default=100, metavar="N",
         help="板块随机抽样数（默认 100）",
     )
-    parser.add_argument("--seed", type=int, default=None, help="板块抽样随机种子")
+    parser.add_argument("--seed", type=int, default=None, help="随机抽样种子")
     parser.add_argument("--verbose", "-v", action="store_true", help="输出全部问题详情")
     args = parser.parse_args()
 
@@ -650,13 +667,16 @@ def main() -> int:
     with get_db() as conn:
         if "stock" in targets:
             validate_stock(
-                conn, report, codes=args.code, limit=args.limit,
+                conn, report,
+                codes=args.code if args.target == "stock" else None,
+                sample=args.stock_sample,
+                seed=args.seed,
             )
         if "sector" in targets:
             validate_sector(
                 conn, report,
                 codes=args.code if args.target == "sector" else None,
-                sample=args.sample,
+                sample=args.sector_sample,
                 seed=args.seed,
             )
 
