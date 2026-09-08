@@ -291,17 +291,25 @@ class MoneyFlowAggregator:
             对每个板块异步提交：
               1. 资金总量（_aggregate_sector_accumulation）
               2. 3/5/10/20 日滑动窗口（_aggregate_sector_sliding_by_window）
+
+            聚合截止日与板块同步一致：不超过 T-1（避免 dc_sectors 残留当日数据
+            时，用未完成的 dc_member 做聚合）。
         """
+        sync_end = self._sector_repo._sync_end_date()
+        logger.info(f"板块聚合上限 T-1={sync_end}")
 
         futures: Dict = {}
         for sector_code, (_, min_date, max_date) in sectors_date_range.items():
-            
+            capped_max = min(max_date, sync_end)
+            if min_date > capped_max:
+                continue
+
             # 资金总量
             future = self._default_pool.submit(
-                self._aggregate_sector_accumulation, 
-                sector_code, 
-                min_date, 
-                max_date,
+                self._aggregate_sector_accumulation,
+                sector_code,
+                min_date,
+                capped_max,
             )
             futures[future] = sector_code
 
@@ -312,7 +320,7 @@ class MoneyFlowAggregator:
                     sector_code,
                     window,
                     min_date,
-                    max_date,
+                    capped_max,
                 )
                 futures[future] = sector_code
 
