@@ -516,17 +516,29 @@ def _validate_one_sector(
     report: ValidationReport,
     validation_start: date,
     validation_end: date,
-) -> None:
+) -> dict:
+    """校验单个板块；返回摘要计数用的状态标志。"""
+    result = {
+        "no_dc": False,
+        "skipped": False,
+        "no_flow": False,
+        "missing_acc": False,
+        "incomplete_acc": False,
+        "incomplete_slide": False,
+        "checked": False,
+    }
     date_range = _sector_date_range(conn, sector_code)
     if not date_range:
         report.add(Issue("sector", sector_code, "accumulation", "dc_sectors 无该板块数据"))
-        return
+        result["no_dc"] = True
+        return result
 
     min_date, max_date = date_range
     start = max(min_date, validation_start)
     end = min(max_date, validation_end)
     if start > end:
-        return
+        result["skipped"] = True
+        return result
 
     member_codes = _member_codes_in_range(conn, sector_code, start, end)
     flows_by_code = _load_flows(conn, member_codes)
@@ -548,23 +560,27 @@ def _validate_one_sector(
     )
 
     if not daily_dates:
+        result["no_flow"] = True
         if acc_dates or any(aggs_ends["sliding"][w] for w in WINDOWS):
             report.add(Issue(
                 "sector", sector_code, "accumulation",
                 "区间内无成员资金流但存在聚合数据",
             ))
-        return
+        return result
 
     if not acc_dates:
+        result["missing_acc"] = True
         report.add(Issue(
             "sector", sector_code, "accumulation",
             f"有 {len(daily_dates)} 个有效交易日，但无 accumulation",
         ))
     else:
-        _report_date_gaps(
+        if _report_date_gaps(
             report, "sector", sector_code, "accumulation", daily_dates, acc_dates,
-        )
+        ):
+            result["incomplete_acc"] = True
 
+    result["checked"] = True
     _compare_agg_series(
         "sector", sector_code, "accumulation",
         _expected_accumulation(daily),
@@ -578,6 +594,7 @@ def _validate_one_sector(
         }
         if len(daily_dates) < window:
             if slide_dates:
+                result["incomplete_slide"] = True
                 report.add(Issue(
                     "sector", sector_code, f"sliding({window}日)",
                     f"有效交易日仅 {len(daily_dates)} 天，不应存在 sliding",
@@ -585,15 +602,17 @@ def _validate_one_sector(
             continue
         expected_slide_dates = daily_dates[window - 1 :]
         if not slide_dates:
+            result["incomplete_slide"] = True
             report.add(Issue(
                 "sector", sector_code, f"sliding({window}日)",
                 "有足够有效交易日但无 sliding 数据",
             ))
         else:
-            _report_date_gaps(
+            if _report_date_gaps(
                 report, "sector", sector_code, f"sliding({window}日)",
                 expected_slide_dates, slide_dates,
-            )
+            ):
+                result["incomplete_slide"] = True
         _compare_agg_series(
             "sector", sector_code, "sliding",
             _expected_sliding(daily, window),
@@ -601,6 +620,7 @@ def _validate_one_sector(
             report,
             window=window,
         )
+    return result
 
 
 def validate_sector(
@@ -632,11 +652,25 @@ def validate_sector(
             + (f"（seed={seed}）" if seed is not None else "")
         )
 
-    for i, code in enumerate(sector_codes, 1):
-        print(f"[{i}/{len(sector_codes)}] 检查板块 {code}...")
-        _validate_one_sector(
+    no_dc = no_flow = missing_acc = incomplete_acc = incomplete_slide = checked = 0
+    for code in sector_codes:
+        st = _validate_one_sector(
             conn, code, report, validation_start, validation_end,
         )
+        no_dc += int(st["no_dc"])
+        no_flow += int(st["no_flow"])
+        missing_acc += int(st["missing_acc"])
+        incomplete_acc += int(st["incomplete_acc"])
+        incomplete_slide += int(st["incomplete_slide"])
+        checked += int(st["checked"])
+
+    print(
+        f"齐全/连续（自 {validation_start}）："
+        f"板块 {len(sector_codes)} 个，无 dc_sectors {no_dc}，无成员 flow {no_flow}，"
+        f"无 accumulation {missing_acc}，accumulation 不齐 {incomplete_acc}，"
+        f"sliding 不齐 {incomplete_slide}"
+    )
+    print(f"数值比对：完成 {checked} 个板块")
 
 
 def main() -> int:
