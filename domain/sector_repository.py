@@ -49,25 +49,27 @@ class SectorRepository:
             updated_dt = datetime.strptime(max_updated, "%Y-%m-%d %H:%M:%S")
             return (time.time() - updated_dt.timestamp()) < self._CACHE_TTL_SECONDS
 
-    def _sync_end_date(self) -> date:
-        """板块/成分同步截止到日历 T-1。
+    def sync_end_date(self) -> date:
+        """板块/成分同步截止日：21 点前取昨天，否则取今天。
 
-        Tushare 说明 dc_member 当日约 20:30 才更新完；暂时不按钟点门禁，
-        统一只同步到昨天，避开当日未完成快照。
+        Tushare 说明 dc_member 当日约 20:30 更新完，故 21 点后再拉当日。
         """
-        return date.today() - timedelta(days=1)
+        now = datetime.now()
+        if now.hour < 21:
+            return now.date() - timedelta(days=1)
+        return now.date()
 
     def _update_sector_data(self) -> None:
         """增量同步东财板块行情到 dc_sectors，并去重写入 sectors。"""
         latest_date = self._load_latest_dc_sector_date()
         start_date = latest_date if latest_date else get_market_earliest_date()
-        end_date = self._sync_end_date()
+        end_date = self.sync_end_date()
         if start_date >= end_date:
-            logger.info(f"dc_sectors 已覆盖至 {start_date}（同步上限 T-1={end_date}），无需拉取")
+            logger.info(f"dc_sectors 已覆盖至: [{start_date} -> {end_date}]，无需拉取")
             self._sync_sectors_from_dc()
             return
 
-        logger.info(f"按日拉取 dc_index: {start_date} ~ {end_date}（上限 T-1）")
+        logger.info(f"按日拉取 dc_index: [{start_date} -> {end_date}]")
         total = 0
         for day, _ in iter_day_ranges(start_date, end_date):
             day_rows = self._adapter.get_sector_data(day)
@@ -77,7 +79,7 @@ class SectorRepository:
             )
             total += inserted
             time.sleep(0.1)
-        logger.info(f"dc_sectors 增量写入完成: {start_date} ~ {end_date}, 共写入 {total} 条")
+        logger.info(f"dc_sectors 增量写入完成: {start_date} -> {end_date}, 共写入 {total} 条")
         self._sync_sectors_from_dc()
 
     def _load_latest_dc_sector_date(self) -> Optional[date]:
@@ -171,18 +173,15 @@ class SectorRepository:
             return
 
         member_dates = self._load_latest_dc_member_dates()
-        sync_end = self._sync_end_date()
-        logger.info(f"按周拉取 dc_member: 共 {len(sectors_date_range)} 个板块，同步上限 T-1={sync_end}")
+        sync_end = self.sync_end_date()
+        logger.info(f"按周拉取 dc_member: 共 {len(sectors_date_range)} 个板块，同步截止日: {sync_end}")
 
         total = 0
         for seq, (code, (ts_code, _, sector_max_date)) in enumerate(sectors_date_range.items()):
             member_max_date = member_dates.get(code)
             end_date = min(sector_max_date, sync_end)
             if member_max_date and member_max_date >= end_date:
-                logger.info(
-                    f"{seq}: {code} 成分已覆盖至 {member_max_date} "
-                    f"(>= 同步上限 {end_date})，跳过"
-                )
+                logger.info(f"{seq}: {code} 成分已覆盖至 {member_max_date} (>= 同步截止日 {end_date})，跳过")
                 continue
 
             start_date = member_max_date or get_market_earliest_date()

@@ -295,8 +295,8 @@ class MoneyFlowAggregator:
             聚合截止日与板块同步一致：不超过 T-1（避免 dc_sectors 残留当日数据
             时，用未完成的 dc_member 做聚合）。
         """
-        sync_end = self._sector_repo._sync_end_date()
-        logger.info(f"板块聚合上限 T-1={sync_end}")
+        sync_end = self._sector_repo.sync_end_date()
+        logger.info(f"板块聚合同步截止日: {sync_end}")
 
         futures: Dict = {}
         for sector_code, (_, min_date, max_date) in sectors_date_range.items():
