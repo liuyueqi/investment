@@ -87,9 +87,11 @@ class MoneyFlowRepository:
         index = 0
 
         for code in stock_codes:
+            index += 1
+
             last_date = last_flow_dates.get(code)
             if self._is_up_to_date(last_date):
-                logger.info(f"股票 {code} 最新数据日期 {last_date} 已同步到最新交易日，跳过")
+                logger.info(f"{index}: 股票 {code} 最新数据日期 {last_date} 已同步到最新交易日，跳过")
                 continue
 
             if last_date:
@@ -97,17 +99,18 @@ class MoneyFlowRepository:
             else:
                 start_date = get_market_earliest_date()
 
-            today = date.today()
-            if start_date > today:
-                logger.warning(f"股票 {code} 最新数据日期 {start_date} 大于今天 {today}，跳过")
+            end_date = self._sync_end_date()
+            if start_date > end_date:
+                logger.warning(f"{index}: 股票 {code} 最新数据起始日期 {start_date} 大于同步上限 {end_date}，跳过")
                 continue
 
-            index += 1
-            logger.info(f"{index}: 正在获取股票 {code} 资金流向数据 [{start_date} -> {today}]...")
-            rows = self._flow_adapter.get_daily_flow(code, start_date, today)
+            logger.info(f"{index}: 正在获取股票 {code} 资金流向数据 [{start_date} -> {end_date}]...")
+            rows = self._flow_adapter.get_daily_flow(code, start_date, end_date)
             if rows:
                 total_saved += self._save_rows_to_db(rows)
-                logger.info(f"{index}: 保存 {len(rows)} 条数据到数据库")
+                count = len(rows)
+                total_saved += count
+                logger.info(f"{index}: 保存了 {count} 条股票 {code} 的资金流向数据到数据库")
             else:
                 logger.warning(f"{index}: 没有获取到股票 {code} 的资金流向数据")
                 
@@ -135,6 +138,13 @@ class MoneyFlowRepository:
                 else:
                     result[code] = None
         return result
+
+    def _sync_end_date(self) -> date:
+        """资金流向同步截止日：16 点前取昨天，否则取今天。"""
+        now = datetime.now()
+        if now.hour < 16:
+            return now.date() - timedelta(days=1)
+        return now.date()
 
     def _is_up_to_date(self, last_date: Optional[date]) -> bool:
         """判断股票数据是否需要更新"""
