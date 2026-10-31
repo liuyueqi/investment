@@ -77,6 +77,32 @@ class TushareAdapter:
             logger.error(f"获取股票列表失败: {e}", exc_info=True)
             return []
 
+    def get_delisted_stock_codes(self) -> Optional[List[str]]:
+        """
+            获取退市股票代码。
+
+            接口: stock_basic(list_status='D')
+            失败返回 None，避免把接口异常当成「没有退市股票」。
+        """
+        try:
+            df = self._pro.stock_basic(
+                list_status="D",
+                fields="ts_code,symbol,name",
+            )
+            if df is None or df.empty:
+                return []
+
+            codes: List[str] = []
+            for _, row in df.iterrows():
+                symbol = str(row.get("symbol", "") or "").strip()
+                if not symbol:
+                    continue
+                codes.append(normalize_code(symbol))
+            return codes
+        except Exception as e:
+            logger.error(f"获取退市股票列表失败: {e}", exc_info=True)
+            return None
+
     def get_all_trading_days(self) -> List[date]:
         """
             获取 A 股交易日历（仅交易日）。

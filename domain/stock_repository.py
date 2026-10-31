@@ -70,6 +70,36 @@ class StockRepository:
         logger.info(
             f"从适配器获取到 {len(stocks)} 只股票，写入/更新 {changed} 条"
         )
+        self._mark_delisted([stock.code for stock in stocks])
+
+    def _mark_delisted(self, listed_codes: List[str]) -> None:
+        """将 Tushare 退市列表中、且当前仍有效的股票标记为删除。"""
+        delisted_codes = self._adapter.get_delisted_stock_codes()
+        if delisted_codes is None:
+            logger.warning("未获取到退市股票列表，跳过删除")
+            return
+
+        listed = set(listed_codes)
+        codes = [code for code in delisted_codes if code not in listed]
+        if not codes:
+            logger.info("没有需要删除的退市股票")
+            return
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        deleted = 0
+        with get_db() as conn:
+            for i in range(0, len(codes), 400):
+                batch = codes[i:i + 400]
+                placeholders = ",".join("?" * len(batch))
+                before = conn.total_changes
+                conn.execute(
+                    f"""UPDATE stocks
+                        SET is_deleted = 1, updated_at = ?
+                        WHERE is_deleted = 0 AND code IN ({placeholders})""",
+                    [now, *batch],
+                )
+                deleted += conn.total_changes - before
+        logger.info(f"退市股票标记删除 {deleted} 只")
 
     def find_all(self) -> List[Stock]:
         """查询所有未删除的股票"""
